@@ -11,6 +11,8 @@
 
 namespace pals {
 
+constexpr double kHalfPi = 1.57079632679489661923;
+
 Quat quat_mul(const Quat& a, const Quat& b) {
     return Quat{
         a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
@@ -59,40 +61,46 @@ Quat quat_rot_y(double angle) { return quat_from_axis_angle(Vec3{0, 1, 0}, angle
 Quat quat_rot_z(double angle) { return quat_from_axis_angle(Vec3{0, 0, 1}, angle); }
 
 Quat quat_from_floor_angles(const FloorAngles& a) {
-    // W = R_y(theta) * R_x(phi) * R_z(psi); the quaternion product mirrors that
-    // matrix product order.
+    // W = R_y(theta) * R_x(-phi) * R_z(psi) (Bmad convention: a positive phi
+    // tilts the z-axis toward +Y); the quaternion product mirrors that matrix
+    // product order.
     return quat_normalize(
-        quat_mul(quat_rot_y(a.theta), quat_mul(quat_rot_x(a.phi), quat_rot_z(a.psi))));
+        quat_mul(quat_rot_y(a.theta), quat_mul(quat_rot_x(-a.phi), quat_rot_z(a.psi))));
 }
 
 FloorAngles floor_angles_from_quat(const Quat& q) {
+    // Same as Bmad's floor_w_mat_to_angles.
     Quat u = quat_normalize(q);
     double ww = u.w, xx = u.x, yy = u.y, zz = u.z;
 
     // Only the entries used to invert Eq. www are formed. The z-axis column of W
-    // is (sin(theta)cos(phi), -sin(phi), cos(theta)cos(phi)); row 2 is
-    // (cos(phi)sin(psi), cos(phi)cos(psi), -sin(phi)).
-    double r02 = 2 * (xx * zz + ww * yy);
-    double r12 = 2 * (yy * zz - ww * xx);
-    double r22 = 1 - 2 * (xx * xx + yy * yy);
-    double r10 = 2 * (xx * yy + ww * zz);
-    double r11 = 1 - 2 * (xx * xx + zz * zz);
+    // is (sin(theta)cos(phi), sin(phi), cos(theta)cos(phi)); row 2 is
+    // (cos(phi)sin(psi), cos(phi)cos(psi), sin(phi)).
+    double w02 = 2 * (xx * zz + ww * yy);
+    double w12 = 2 * (yy * zz - ww * xx);
+    double w22 = 1 - 2 * (xx * xx + yy * yy);
 
     FloorAngles a;
-    double cos_phi = std::sqrt(r02 * r02 + r22 * r22);
-    a.phi = std::atan2(-r12, cos_phi);
-    if (cos_phi > 1e-12) {
-        a.theta = std::atan2(r02, r22);
-        a.psi = std::atan2(r10, r11);
-    } else {
-        // Gimbal lock (phi = +-pi/2): theta and psi share an axis. Pin psi = 0
-        // and let theta carry the whole rotation. With psi = 0, W row 0 reduces
-        // to (cos(theta), *, *) and W[0][0] = r00, W[2][0] = r20.
-        double r00 = 1 - 2 * (yy * yy + zz * zz);
-        double r20 = 2 * (xx * zz - ww * yy);
-        a.theta = std::atan2(-r20, r00);
-        a.psi = 0.0;
+    if (std::fabs(w02) + std::fabs(w22) < 1e-12) {
+        // Gimbal lock (phi = +-pi/2): theta and psi share an axis and only
+        // theta -+ psi is defined. Pin theta = 0 and let psi carry the rotation.
+        double w00 = 1 - 2 * (yy * yy + zz * zz);
+        double w20 = 2 * (xx * zz - ww * yy);
+        a.theta = 0.0;
+        if (w12 > 0) {
+            a.phi = kHalfPi;
+            a.psi = std::atan2(-w20, w00);
+        } else {
+            a.phi = -kHalfPi;
+            a.psi = std::atan2(w20, w00);
+        }
+        return a;
     }
+    double w10 = 2 * (xx * yy + ww * zz);
+    double w11 = 1 - 2 * (xx * xx + zz * zz);
+    a.theta = std::atan2(w02, w22);
+    a.phi = std::atan2(w12, std::sqrt(w02 * w02 + w22 * w22));
+    a.psi = std::atan2(w10, w11);
     return a;
 }
 

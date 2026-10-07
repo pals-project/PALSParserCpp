@@ -88,16 +88,26 @@ TEST_CASE("FloorP angles round-trip through the quaternion", "[floor]") {
     chk_same_rotation(quat_from_floor_angles(b), q);
 }
 
+TEST_CASE("A positive phi tilts the z-axis toward +Y (Bmad convention)", "[floor]") {
+    // W(1,2) = sin(phi): the z-axis column of W is (sin(theta)cos(phi), sin(phi),
+    // cos(theta)cos(phi)).
+    FloorAngles a{0.3, 0.2, -0.4};
+    Vec3 z = quat_rotate(quat_from_floor_angles(a), Vec3{0, 0, 1});
+    chk(z.x, std::sin(0.3) * std::cos(0.2));
+    chk(z.y, std::sin(0.2));
+    chk(z.z, std::cos(0.3) * std::cos(0.2));
+}
+
 TEST_CASE("floor_angles_from_quat handles the +pi/2 gimbal lock", "[floor]") {
-    // At phi = +pi/2, theta and psi share an axis; the branch pins psi = 0 and
-    // lets theta carry the rotation. The recovered angles must still encode the
-    // original orientation exactly.
+    // At phi = +pi/2, theta and psi share an axis; as in Bmad, theta is pinned
+    // to 0 and psi carries the rotation. The recovered angles must still encode
+    // the original orientation exactly.
     FloorAngles a{0.5, kPi / 2, 0.3};
     Quat q = quat_from_floor_angles(a);
     FloorAngles b = floor_angles_from_quat(q);
 
     chk(b.phi, kPi / 2);
-    chk(b.psi, 0.0);
+    chk(b.theta, 0.0);
     chk_same_rotation(quat_from_floor_angles(b), q);
 }
 
@@ -107,7 +117,7 @@ TEST_CASE("floor_angles_from_quat handles the -pi/2 gimbal lock", "[floor]") {
     FloorAngles b = floor_angles_from_quat(q);
 
     chk(b.phi, -kPi / 2);
-    chk(b.psi, 0.0);
+    chk(b.theta, 0.0);
     chk_same_rotation(quat_from_floor_angles(b), q);
 }
 

@@ -85,12 +85,14 @@ Quat quat_rot_z(double angle);
 // --- FloorP angle <-> quaternion (Eq. www) ---
 
 // Build the orientation quaternion from FloorP angles:
-//   W = R_y(theta) * R_x(phi) * R_z(psi).
+//   W = R_y(theta) * R_x(-phi) * R_z(psi).
+// As in Bmad, a positive phi tilts the z-axis toward +Y.
 Quat quat_from_floor_angles(const FloorAngles& a);
 
 // Recover the FloorP angles from an orientation quaternion (inverse of
-// quat_from_floor_angles). At the phi = +-pi/2 gimbal singularity psi is taken
-// to be zero and theta absorbs the remaining rotation.
+// quat_from_floor_angles), as in Bmad's floor_w_mat_to_angles. At the
+// phi = +-pi/2 gimbal singularity theta is taken to be zero and psi absorbs the
+// remaining rotation.
 FloorAngles floor_angles_from_quat(const Quat& q);
 
 // --- Reference-curve propagation ---

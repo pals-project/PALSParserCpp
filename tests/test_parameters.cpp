@@ -5,13 +5,18 @@
 // ============================================================
 
 TEST_CASE("get_parameter_value returns a set numeric value", "[param]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
-    // lat1>>> disambiguates the two B1a's.
-    struct param_value v = get_parameter_value(t, "lat1>>>B1a>length");
+    Expanded x(MATCH_YAML);
+    struct param_value v = get_parameter_value(x.full(), "Q1>length");
     REQUIRE(v.kind == PARAM_VALUE_NUMBER);
-    REQUIRE(v.number == Catch::Approx(1.2));
+    REQUIRE(v.number == Catch::Approx(0.5));
 
-    v = get_parameter_value(t, "lat1>>>B1a>BendP.e1");
+    v = get_parameter_value(x.full(), "B1b>BendP.e1");
+    REQUIRE(v.kind == PARAM_VALUE_NUMBER);
+    REQUIRE(v.number == Catch::Approx(0.3));
+
+    // Before expansion the definition answers.
+    YAMLTreeHandle t = parse_string(MATCH_YAML);
+    v = get_parameter_value(t, "B1a>BendP.e1");
     REQUIRE(v.kind == PARAM_VALUE_NUMBER);
     REQUIRE(v.number == Catch::Approx(0.1));
     delete_tree(t);
@@ -19,18 +24,17 @@ TEST_CASE("get_parameter_value returns a set numeric value", "[param]") {
 
 TEST_CASE("get_parameter_value returns the default for an unset parameter",
           "[param]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
+    Expanded x(MATCH_YAML);
     // Q1 exists but has no BendP.g; the default (0, for now) comes back.
-    struct param_value v = get_parameter_value(t, "Q1>BendP.g");
+    struct param_value v = get_parameter_value(x.full(), "Q1>BendP.g");
     REQUIRE(v.kind == PARAM_VALUE_NUMBER);
     REQUIRE(v.number == 0.0);
 
     // A name that is not a real parameter is indistinguishable from an unset one
     // without a schema, so it also takes the default.
-    v = get_parameter_value(t, "Q1>not_a_param");
+    v = get_parameter_value(x.full(), "Q1>not_a_param");
     REQUIRE(v.kind == PARAM_VALUE_NUMBER);
     REQUIRE(v.number == 0.0);
-    delete_tree(t);
 }
 
 TEST_CASE("get_parameter_value returns a non-numeric value as a string",
@@ -38,17 +42,11 @@ TEST_CASE("get_parameter_value returns a non-numeric value as a string",
     YAMLTreeHandle t = parse_string(
         "PALS:\n"
         "  facility:\n"
-        "    - lat:\n"
-        "        kind: Lattice\n"
-        "        branches:\n"
-        "          - bl:\n"
-        "              kind: BeamLine\n"
-        "              line:\n"
-        "                - fl:\n"
-        "                    kind: Foil\n"
-        "                    length: 2 * 0.5\n"
-        "                    ReferenceP:\n"
-        "                      species_ref: \"#3He\"\n");
+        "    - fl:\n"
+        "        kind: Foil\n"
+        "        length: 2 * 0.5\n"
+        "        ReferenceP:\n"
+        "          species_ref: \"#3He\"\n");
     // A species name is not numeric: returned as a string.
     struct param_value v = get_parameter_value(t, "fl>ReferenceP.species_ref");
     REQUIRE(v.kind == PARAM_VALUE_STRING);
@@ -74,8 +72,7 @@ TEST_CASE("get_parameter_value returns missing when nothing is identified",
     // No parameter path — a bare element names no parameter.
     REQUIRE(get_parameter_value(t, "B1a").kind == PARAM_VALUE_MISSING);
     // The path resolves to a whole parameter group, not a single value.
-    REQUIRE(get_parameter_value(t, "lat1>>>B1a>BendP").kind ==
-            PARAM_VALUE_MISSING);
+    REQUIRE(get_parameter_value(t, "B1a>BendP").kind == PARAM_VALUE_MISSING);
     // Malformed pattern.
     REQUIRE(get_parameter_value(t, "(unclosed>length").kind ==
             PARAM_VALUE_MISSING);
@@ -185,17 +182,29 @@ TEST_CASE("get_lattice_parameter_value tries expanded, then adjunct",
 
 TEST_CASE("get_parameter_value collapses agreeing matches, rejects conflicts",
           "[param]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
+    Expanded x(MATCH_YAML);
 
-    // B1a matches in both lattices with different lengths (1.2 vs 9.9): a
-    // conflict leaves the parameter unidentified.
-    REQUIRE(get_parameter_value(t, "B1a>length").kind == PARAM_VALUE_MISSING);
+    // B1a and B1b have different lengths: a conflict leaves the parameter
+    // unidentified.
+    REQUIRE(get_parameter_value(x.full(), "B1.>length").kind ==
+            PARAM_VALUE_MISSING);
 
-    // B1a and B1b both live in lat1 and are both Bends; their equal `kind`
-    // collapses to a single string value.
-    struct param_value v = get_parameter_value(t, "lat1>>>B1.>kind");
+    // The two copies of B1a agree.
+    struct param_value v = get_parameter_value(x.full(), "B1a>length");
+    REQUIRE(v.kind == PARAM_VALUE_NUMBER);
+    REQUIRE(v.number == Catch::Approx(1.2));
+
+    // B1a and B1b are both Bends; their equal `kind` collapses to one string.
+    v = get_parameter_value(x.full(), "B1.>kind");
     REQUIRE(v.kind == PARAM_VALUE_STRING);
     REQUIRE(std::string(v.string) == "Bend");
     yaml_free_string(v.string);
+}
+
+TEST_CASE("get_parameter_value reads a controller variable", "[param]") {
+    YAMLTreeHandle t = parse_string(MATCH_YAML);
+    struct param_value v = get_parameter_value(t, "ps1>cur");
+    REQUIRE(v.kind == PARAM_VALUE_NUMBER);
+    REQUIRE(v.number == Catch::Approx(0.1));
     delete_tree(t);
 }

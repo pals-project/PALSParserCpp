@@ -136,8 +136,15 @@ other tree.
 - `ReferenceP` — the reference species, energy, momentum and time, threaded
   along the branch from the beginning element (or from the `Fork` that created
   the branch) and propagated through each element in turn.
-- `FloorP` — the element's floor placement, likewise accumulated along the
-  branch.
+- `FloorP` — the element's nominal floor placement, accumulated along the
+  branch. A `FloorShift` places its exit end, and so everything downstream of
+  it, from its `CoordinateSetP` and `BodyShiftP`; a `Fiducial` fixes its own
+  placement the same way and carries the stretch of the branch around it —
+  from the branch start or the previous `FloorShift` to the next one — bodily
+  to match.
+- `ShiftedFloorP` — the placement with the element's `BodyShiftP` and the
+  shifts of the `Girder`s supporting it applied. Equal to `FloorP` for an
+  element nothing shifts.
 - The **derived members of every parameter family** the element uses: an
   authored `Kn1` brings `Kn1L`, `Bn1` and `Bn1L` with it, a `gradient` brings a
   `voltage`, an authored pair of bend geometry parameters brings the rest.
@@ -197,7 +204,7 @@ What stays is decided by **what the author wrote**, recorded as a snapshot of
 the lattice's shape taken at the last moment it held the inputs and nothing
 else: after expansion and expression evaluation, before the bookkeeper. A
 parameter is kept when it was present in that snapshot or was written by a
-post-`expand_lattice` `set`; everything else the bookkeeper computed is cut,
+`post_expansion` `set`; everything else the bookkeeper computed is cut,
 along with any group left empty by the cutting and the `branch_end` elements.
 `kind` is always kept — it says what an element is, not how it was set up.
 
@@ -219,8 +226,11 @@ write a lattice back out without the derived values.
 
 Everything the expanded trees do not carry, keeping the `PALS`/`facility`
 scaffolding it was written under: element and beamline definitions, `use`
-statements, constants and variables, controllers, `set` commands, and any
-`Lattice` that was not the one expanded.
+statements, constants and variables, controllers, `set` commands, the
+`post_expansion` and `adjustments` lists, and any `Lattice` that was not the one
+expanded. The girders live here too, under `PALS: girders`, since they are
+outside the lattice; each carries the `FloorP` and `ShiftedFloorP` the
+expansion computed for it.
 
 A definition substituted into the lattice is *copied* rather than moved, so it
 appears in both places: `d1` above is in the expanded lattice twice and still

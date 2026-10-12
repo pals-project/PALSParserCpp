@@ -903,6 +903,36 @@ static void strip_branch_kinds(ryml::Tree& t, size_t lat_node,
 }
 
 /**
+ * Remove the `Placeholder` elements from every branch of the expanded lattice
+ * `lat_node`. A Placeholder in the file holds a place during construction and
+ * never survives into the expanded lattice (lattice-element-kinds.md,
+ * s:placeholder); the one the bookkeeper caps each branch with is added later.
+ */
+static void remove_placeholders(ryml::Tree& t, size_t lat_node,
+                                std::map<size_t, size_t>& prov) {
+    size_t branches = t.find_child(lat_node, ryml::to_csubstr("branches"));
+    if (branches == ryml::NONE || !t.is_seq(branches)) return;
+    for (size_t entry = t.first_child(branches); entry != ryml::NONE;
+         entry = t.next_sibling(entry)) {
+        if (!t.is_map(entry)) continue;
+        size_t branch = t.first_child(entry);
+        if (branch == ryml::NONE || !t.is_map(branch)) continue;
+        size_t line = t.find_child(branch, ryml::to_csubstr("line"));
+        if (line == ryml::NONE || !t.is_seq(line)) continue;
+        for (size_t le = t.first_child(line); le != ryml::NONE;) {
+            size_t next = t.next_sibling(le);
+            size_t def = t.is_map(le) ? t.first_child(le) : ryml::NONE;
+            if (def != ryml::NONE && t.is_map(def) &&
+                child_val_str(t, def, "kind") == "Placeholder") {
+                erase_prov_subtree(t, le, prov);
+                t.remove(le);
+            }
+            le = next;
+        }
+    }
+}
+
+/**
  * Number the elements of every branch whose root line is itself `multipass`.
  *
  * A branch's own line is the top of the sub-line chain, so a `multipass: true`
@@ -1489,10 +1519,14 @@ static size_t find_lattice(ryml::Tree& t, const std::string& name) {
 // avoids a stray collision between such a name and a constant (e.g. an element
 // literally named `pi`).
 //
-// `authors`, `notes` and `reminders` are free-form prose (fundamentals.md,
+// `authors`, `notes` and `reminders` are free-form prose (top-level.md,
 // s:palsroot), so nothing in them is an expression. Prose that happens to carry
 // a `/` (a file path) or parentheses would otherwise be taken for arithmetic by
 // looks_like_expression and reported as a broken expression.
+//
+// `parameter` (an `adjustments` vary/target), `elements` (GirderP) and
+// `origin_ele` (CoordinateSetP) are name-matching strings, and
+// `origin_ele_ref_pt` an enum.
 //
 // `destination_pointer` is here for a different reason: it is a node id, and a
 // node id is a number, so evaluating it "succeeds" and rewrites it through
@@ -1507,7 +1541,9 @@ static const std::set<std::string>& non_expr_keys() {
         "destination_element", "new_branch", "multipass",
         "propagate_reference", "name", "multipass_index",
         "element_index", "destination_pointer", "forked_to",
-        "authors",    "notes",       "reminders"};
+        "authors",    "notes",       "reminders",
+        "parameter",  "elements",    "origin_ele",
+        "origin_ele_ref_pt"};
     return keys;
 }
 
@@ -1594,8 +1630,8 @@ static void set_str_child(ryml::Tree& t, size_t parent, const char* key,
 }
 
 // Set (or create) a keyed scalar child to a bare (unquoted) token. Used for
-// enum and boolean defaults (e.g. `cavity_type: STANDING_WAVE`, `direction:
-// FORWARDS`, `aperture_active: true`), which are plain YAML scalars, not strings.
+// enum and boolean defaults (e.g. `cavity_type: STANDING_WAVE`,
+// `aperture_active: true`), which are plain YAML scalars, not strings.
 static void set_plain_child(ryml::Tree& t, size_t parent, const char* key,
                             const char* v) {
     size_t c = t.find_child(parent, ryml::to_csubstr(key));
@@ -1617,9 +1653,10 @@ static void set_plain_child(ryml::Tree& t, size_t parent, const char* key,
 // the reference momentum); an electric one has two; a bend's geometry is tied
 // together through BendP.
 //
-// miscellaneous.md (s:set): "For any group of interdependent parameters, the set
-// of one member of the group nullifies previous settings of all other members of
-// the group." Nullifying is what keeps the family from being flagged as
+// parameter-values-and-controllers.md (s:set): "For any group of interdependent
+// parameters, the set
+// of one member of the group nullifies previous settings of all other members
+// of the group." Nullifying is what keeps the family from being flagged as
 // inconsistent when the bookkeeper derives it: whoever writes last states the
 // quantity, and the earlier statements of it are gone. The rule holds for every
 // writer that acts on a parameter from outside the element definition -- `set`
@@ -1710,10 +1747,13 @@ static bool is_set_node(const ryml::Tree& t, size_t node) {
 // Collects user constant/variable definitions (name -> defining expression),
 // in both the full (`kind: constant`/`value:`) and compact
 // (`constants:`/`variables:` lists) forms. First definition of a name wins;
-// the standard requires duplicates to share the same value. Controller subtrees
-// are skipped: their variables are controller-scoped, not global symbols.
-static void collect_defs(const ryml::Tree& t, size_t node,
-                         std::map<std::string, std::string>& defs) {
+// the standard requires duplicates to share the same value, which
+// check_definitions verifies. `all`, when given, receives every definition,
+// duplicates included. Controller subtrees are skipped: their variables are
+// controller-scoped, not global symbols.
+static void collect_defs(
+    const ryml::Tree& t, size_t node, std::map<std::string, std::string>& defs,
+    std::vector<std::pair<std::string, std::string>>* all = nullptr) {
     if (node == ryml::NONE || is_controller(t, node)) return;
 
     // Full form: a named map with `kind: constant|variable` and a `value:`.
@@ -1724,8 +1764,10 @@ static void collect_defs(const ryml::Tree& t, size_t node,
             if (k == "constant" || k == "variable") {
                 size_t val = t.find_child(node, ryml::to_csubstr("value"));
                 if (val != ryml::NONE && t.has_val(val)) {
-                    defs.emplace(std::string(t.key(node).str, t.key(node).len),
-                                 std::string(t.val(val).str, t.val(val).len));
+                    std::string name(t.key(node).str, t.key(node).len);
+                    std::string text(t.val(val).str, t.val(val).len);
+                    defs.emplace(name, text);
+                    if (all) all->emplace_back(name, text);
                 }
             }
         }
@@ -1738,9 +1780,11 @@ static void collect_defs(const ryml::Tree& t, size_t node,
         std::string k(t.key(node).str, t.key(node).len);
         if (k == "constants" || k == "variables") {
             auto emit = [&](size_t kv) {
-                if (t.has_key(kv) && t.has_val(kv))
-                    defs.emplace(std::string(t.key(kv).str, t.key(kv).len),
-                                 std::string(t.val(kv).str, t.val(kv).len));
+                if (!t.has_key(kv) || !t.has_val(kv)) return;
+                std::string name(t.key(kv).str, t.key(kv).len);
+                std::string text(t.val(kv).str, t.val(kv).len);
+                defs.emplace(name, text);
+                if (all) all->emplace_back(name, text);
             };
             if (t.is_map(node)) {
                 for (size_t kv = t.first_child(node); kv != ryml::NONE;
@@ -1760,7 +1804,7 @@ static void collect_defs(const ryml::Tree& t, size_t node,
 
     for (size_t c = t.first_child(node); c != ryml::NONE;
          c = t.next_sibling(c))
-        collect_defs(t, c, defs);
+        collect_defs(t, c, defs, all);
 }
 
 // True if a scalar was *meant* to be an expression — it carries an arithmetic
@@ -1957,7 +2001,7 @@ static void collect_controller_defs(ryml::Tree& t, std::vector<Ctrl>& ctrls,
     collect_controllers(t, t.root_id(), nodes);
 
     // Neither an initial value nor a control expression may reach outside its
-    // own controller (miscellaneous.md, s:controller). Every such reference --
+    // own controller (parameter-values-and-controllers.md, s:controller). Every such reference --
     // a lattice parameter, another controller's variable -- is spelled with
     // `>`, so one test covers both, and it is what keeps evaluation order
     // decidable from the `controls` hierarchy alone.
@@ -2481,6 +2525,68 @@ static void make_expression_context(const ryml::Tree& t,
     species_out = species;
 }
 
+// Check the constants and variables (parameter-values-and-controllers.md,
+// s:constants): a name defined more than once must be given the same value
+// each time, and no definition may depend on itself, directly or through
+// others.
+static void check_definitions(const ryml::Tree& t, ProblemList& problems) {
+    std::map<std::string, std::string> defs;
+    std::vector<std::pair<std::string, std::string>> all;
+    collect_defs(t, t.root_id(), defs, &all);
+
+    // Circular definitions, found by walking the names each definition uses.
+    std::map<std::string, int> state;  // 1 = on the walk, 2 = done
+    std::set<std::string> reported;
+    std::function<void(const std::string&, std::vector<std::string>&)> visit =
+        [&](const std::string& name, std::vector<std::string>& stack) {
+            state[name] = 1;
+            stack.push_back(name);
+            bool was_expr = false;
+            for (const std::string& id : expression_identifiers(
+                     strip_expr_wrapper(defs[name], was_expr))) {
+                if (!defs.count(id)) continue;
+                if (state[id] == 1) {
+                    auto from = std::find(stack.begin(), stack.end(), id);
+                    std::string chain;
+                    for (auto it = from; it != stack.end(); ++it)
+                        chain += *it + " -> ";
+                    if (reported.insert(id).second)
+                        add_problem(problems,
+                                    "circular definition: " + chain + id, id);
+                } else if (state[id] == 0) {
+                    visit(id, stack);
+                }
+            }
+            stack.pop_back();
+            state[name] = 2;
+        };
+    for (const auto& d : defs) {
+        std::vector<std::string> stack;
+        if (state[d.first] == 0) visit(d.first, stack);
+    }
+
+    // Redefinitions to a different value.
+    pals::SymbolLookup resolve;
+    pals::SpeciesLookup species;
+    make_expression_context(t, resolve, species);
+    std::set<std::string> said;
+    for (const auto& d : all) {
+        const std::string& first = defs[d.first];
+        if (d.second == first || said.count(d.first)) continue;
+        bool w1 = false, w2 = false;
+        pals::EvalOutcome a =
+            pals::eval_expression(strip_expr_wrapper(first, w1), resolve, species);
+        pals::EvalOutcome b = pals::eval_expression(
+            strip_expr_wrapper(d.second, w2), resolve, species);
+        if (a.ok && b.ok && a.value == b.value) continue;
+        said.insert(d.first);
+        add_problem(problems,
+                    "'" + d.first + "' is defined more than once with different "
+                    "values ('" + first + "' and '" + d.second + "')",
+                    d.first);
+    }
+}
+
 // Evaluates all expressions in the (already expanded) tree in place, and
 // applies the controllers to `lat_node`. Records anything that could not be
 // evaluated in `problems`.
@@ -2557,11 +2663,11 @@ static bool get_str_child(const ryml::Tree& t, size_t parent, const char* key,
 }
 
 // ============================================================
-// SET COMMANDS AND THE expand_lattice SPLIT
+// SET COMMANDS, facility AND post_expansion
 // ============================================================
 //
-// A `set` (miscellaneous.md, s:set) writes a value into every parameter its
-// `parameter` name-matching string selects:
+// A `set` (parameter-values-and-controllers.md, s:set) writes a value into
+// every parameter its `parameter` name-matching string selects:
 //
 //   - set:
 //       parameter: B1.*>BendP.e1
@@ -2571,43 +2677,40 @@ static bool get_str_child(const ryml::Tree& t, size_t parent, const char* key,
 // parameter being written and `SELF` for the element that owns it. The compact
 // `sets:` form is a list of `target: value` pairs with no error terms.
 //
-// Where a set acts depends on where it sits relative to the `expand_lattice`
-// node (lattice-construction.md, s:expand.lat), which divides the `facility`
-// list in two. A set in the pre-expansion list acts on the element
-// *definitions*, and only on those defined before it in the list, so one
-// definition is written once and every expanded copy inherits the value. A set
-// in the post-expansion list acts on the already-expanded lattice, so each copy
-// of a repeated element is written separately -- which is the point of
-// `expand_lattice`.
+// Where a set acts depends on which list holds it (top-level.md, s:facility). A
+// set in `facility` acts on the element *definitions*, and only on those
+// defined before it in the list, so one definition is written once and every
+// expanded copy inherits the value. A set in `post_expansion` acts on the
+// already-expanded lattice, so each copy of a repeated element is written
+// separately.
 
-// The `facility` sequence of the PALS node, or ryml::NONE. Includes have already
-// been spliced into it in place, so there is one list holding every node of
-// every file, in order.
-static size_t find_facility(const ryml::Tree& t) {
+// The keyed list `key` (`facility`, `post_expansion`) of the PALS node, or
+// ryml::NONE. Includes have already been spliced into it in place, so it holds
+// every node of every file, in order.
+static size_t find_pals_list(const ryml::Tree& t, const char* key) {
     size_t pals = t.find_child(t.root_id(), ryml::to_csubstr("PALS"));
     if (pals == ryml::NONE) return ryml::NONE;
-    size_t fac = t.find_child(pals, ryml::to_csubstr("facility"));
-    return (fac != ryml::NONE && t.is_seq(fac)) ? fac : ryml::NONE;
+    size_t l = t.find_child(pals, ryml::to_csubstr(key));
+    return (l != ryml::NONE && t.is_seq(l)) ? l : ryml::NONE;
 }
 
-// The keyed child of a facility entry (the entry is an anonymous wrapper map
-// holding one keyed node), or ryml::NONE for a bare scalar entry such as
-// `- expand_lattice`.
+// The entries of one of the PALS lists, in order.
+static std::vector<size_t> pals_list_entries(const ryml::Tree& t,
+                                             const char* key) {
+    std::vector<size_t> out;
+    size_t l = find_pals_list(t, key);
+    if (l == ryml::NONE) return out;
+    for (size_t e = t.first_child(l); e != ryml::NONE; e = t.next_sibling(e))
+        out.push_back(e);
+    return out;
+}
+
+// The keyed child of a list entry (the entry is an anonymous wrapper map
+// holding one keyed node), or ryml::NONE for a bare scalar entry.
 static size_t entry_content(const ryml::Tree& t, size_t entry) {
     if (entry == ryml::NONE || !t.is_map(entry)) return ryml::NONE;
     size_t c = t.first_child(entry);
     return (c != ryml::NONE && t.has_key(c)) ? c : ryml::NONE;
-}
-
-// True for the `expand_lattice` node that splits the facility list. Written as
-// a bare scalar (`- expand_lattice`); the keyed form is accepted too, since a
-// trailing colon is an easy thing to write.
-static bool is_expand_lattice(const ryml::Tree& t, size_t entry) {
-    if (entry == ryml::NONE) return false;
-    if (!t.has_key(entry) && t.has_val(entry))
-        return t.val(entry) == ryml::to_csubstr("expand_lattice");
-    size_t c = entry_content(t, entry);
-    return c != ryml::NONE && t.key(c) == ryml::to_csubstr("expand_lattice");
 }
 
 // Everything a `set` needs to know about where it is writing: the element, the
@@ -2902,30 +3005,8 @@ static std::vector<SetCommand> entry_set_commands(const ryml::Tree& t,
     return out;
 }
 
-// The facility list split at `expand_lattice`, in order. `post` is empty when
-// there is no such node, which is the usual case.
-struct FacilitySplit {
-    std::vector<size_t> pre;
-    std::vector<size_t> post;
-};
-
-static FacilitySplit split_facility(const ryml::Tree& t) {
-    FacilitySplit out;
-    size_t fac = find_facility(t);
-    if (fac == ryml::NONE) return out;
-    bool after = false;
-    for (size_t e = t.first_child(fac); e != ryml::NONE; e = t.next_sibling(e)) {
-        if (!after && is_expand_lattice(t, e)) {
-            after = true;
-            continue;
-        }
-        (after ? out.post : out.pre).push_back(e);
-    }
-    return out;
-}
-
-// Run the `set` commands of the pre-expansion list, in list order. Each acts on
-// the element definitions that precede it, which is why the entries are walked
+// Run the `set` commands of the `facility` list, in list order. Each acts on the
+// element definitions that precede it, which is why the entries are walked
 // rather than the tree: `Q2` defined after a set is not touched by it.
 static void run_pre_expansion_sets(ryml::Tree& t,
                                    const std::vector<size_t>& entries,
@@ -2958,7 +3039,7 @@ static void run_pre_expansion_sets(ryml::Tree& t,
     }
 }
 
-// Run the `set` commands of the post-expansion list against the expanded
+// Run the `set` commands of the `post_expansion` list against the expanded
 // lattice. Order still matters -- a later set sees what an earlier one wrote --
 // but every set sees the whole lattice, since it has already been built.
 static void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
@@ -3153,8 +3234,8 @@ static void write_floor(ryml::Tree& t, size_t ele, const pals::FloorState& s) {
 // Build the floor displacement L and coordinate rotation S for an element's
 // reference curve, dispatched on kind: bends use their BendP angle/tilt, patches
 // their PatchP offsets/rotations, everything else is a straight segment of the
-// element length. (FloorShift, which also redirects the reference curve, is not
-// yet handled and is treated as straight.)
+// element length. (A FloorShift places its exit end outright; see
+// coordinate_set_frame.)
 static void element_LS(const ryml::Tree& t, size_t ele, const std::string& kind,
                        double length, pals::Vec3& L, pals::Quat& S) {
     if (kind == "Bend") {
@@ -3630,7 +3711,8 @@ static const GroupDefault kGroupDefaults[] = {
     {"ApertureP", "shape", "ELLIPTICAL"},
     {"ApertureP", "location", "ENTRANCE_END"},
     {"ApertureP", "aperture_active", "true"},
-    {"ForkP", "direction", "FORWARDS"},
+    {"CoordinateSetP", "origin_ele", "GLOBAL_ORIGIN"},
+    {"CoordinateSetP", "origin_ele_ref_pt", "EXIT_END"},
     {"ForkP", "propagate_reference", "true"},
 };
 
@@ -3645,44 +3727,49 @@ static void materialize_group_defaults(ryml::Tree& t, size_t ele) {
     }
 }
 
+// Where a branch's first element takes its reference and floor from when the
+// branch was made by a Fork (fork.md, s:forking): the Fork's floor always, its
+// reference only when `propagate_reference` is true.
+struct ForkSeed {
+    size_t fork = ryml::NONE;
+    bool reference = false;
+};
+
 // The per-element bookkeeper. Given the previous element in the branch (NONE for
 // the first, the BeginningEle) and the current element, compute and store the
 // current element's upstream reference parameters, floor placement, s-position,
 // and field-dependent parameters. Order matters: the reference momentum is
 // needed for the dependent-parameter conversions, so reference comes first.
 //
-// `seed_fork` names the Fork element that instantiated this branch, or NONE. It
-// is set only for the first element of a branch created by a Fork whose
-// `propagate_reference` is true: that beginning (destination) element then
-// inherits the Fork's reference species/energy and floor placement instead of
-// starting from the branch's own (usually empty) inputs (fork.md, s:forking).
+// `seed` names the Fork element that instantiated this branch, for the first
+// element of a branch a Fork created. `exits` holds the exit placements of the
+// elements that set theirs outright (FloorShift), which take the place of
+// propagating through them.
 static void _element_bookkeeper(ryml::Tree& t, size_t prev, size_t ele,
                                 ProblemList& problems,
-                                size_t seed_fork = ryml::NONE) {
+                                const std::map<size_t, pals::FloorState>& exits,
+                                ForkSeed seed = ForkSeed()) {
     std::string kind = child_val_str(t, ele, "kind");
 
     RefState up;
     pals::FloorState floor;
     double s_pos = 0.0;
 
-    if (prev == ryml::NONE && seed_fork != ryml::NONE) {
-        // Beginning element of a forked branch with propagate_reference: inherit
-        // the Fork element's reference and floor. A Fork has zero length and a
-        // unit transfer map, so its stored (upstream) reference and floor are
-        // also its values at the connection point. The new branch's s-coordinate
-        // still starts at zero.
-        up = read_ref(t, seed_fork);
-        complete_energy(up);
-        read_floor(t, seed_fork, floor);
-    } else if (prev == ryml::NONE) {
+    if (prev == ryml::NONE) {
         // First element of the branch (BeginningEle): reference, floor and
         // s-position are user inputs. Complete the reference (fill pc from E or
         // vice versa) and normalize the floor placement; both default sensibly
         // when unset (zero energy/momentum, origin, identity orientation, s = 0).
-        up = read_ref(t, ele);
+        // A branch a Fork made takes the Fork's floor instead, and its reference
+        // too when the Fork propagates it. A Fork has zero length and a unit
+        // transfer map, so its stored (upstream) reference and floor are also
+        // its values at the connection point. The s-coordinate of the new
+        // branch still starts at zero.
+        bool take_ref = seed.fork != ryml::NONE && seed.reference;
+        up = read_ref(t, take_ref ? seed.fork : ele);
         complete_energy(up);
-        read_floor(t, ele, floor);  // leaves the origin/identity default if absent
-        get_num_child(t, ele, "s_position", s_pos);
+        read_floor(t, seed.fork != ryml::NONE ? seed.fork : ele, floor);
+        if (seed.fork == ryml::NONE) get_num_child(t, ele, "s_position", s_pos);
     } else {
         // Any later element: its upstream parameters are the previous element's
         // downstream parameters, propagated through the previous element.
@@ -3694,12 +3781,17 @@ static void _element_bookkeeper(ryml::Tree& t, size_t prev, size_t ele,
         complete_energy(pup);
         up = downstream_ref(t, prev, pkind, pup, plen, problems);
 
-        pals::FloorState pfloor;
-        read_floor(t, prev, pfloor);
-        pals::Vec3 L;
-        pals::Quat S;
-        element_LS(t, prev, pkind, plen, L, S);
-        floor = pals::floor_propagate(pfloor, L, S);
+        auto ex = exits.find(prev);
+        if (ex != exits.end()) {
+            floor = ex->second;
+        } else {
+            pals::FloorState pfloor;
+            read_floor(t, prev, pfloor);
+            pals::Vec3 L;
+            pals::Quat S;
+            element_LS(t, prev, pkind, plen, L, S);
+            floor = pals::floor_propagate(pfloor, L, S);
+        }
 
         double ps = 0.0;
         get_num_child(t, prev, "s_position", ps);
@@ -3718,6 +3810,425 @@ static void _element_bookkeeper(ryml::Tree& t, size_t prev, size_t ele,
     materialize_group_defaults(t, ele);
     compute_dependent(t, ele, kind, up, length, problems);
     compute_rf_dependent(t, ele, length, problems);
+}
+
+// ---------------------------------------------------------------------------
+// FLOOR PLACEMENT: FloorShift, Fiducial, Girder and ShiftedFloorP
+// ---------------------------------------------------------------------------
+//
+// Most elements are placed by propagating along the branch. Three kinds place
+// something outright, through a CoordinateSetP (coordinateset.md): a coordinate
+// system taken at a reference point of an origin element (or the global origin),
+// shifted by the group's offsets and rotations, and then by the element's own
+// BodyShiftP.
+//
+//  - A FloorShift sets the placement of its exit end, and so of everything
+//    downstream of it, leaving everything upstream alone.
+//  - A Fiducial (zero length) fixes its own placement, and so moves the elements
+//    both upstream and downstream of it: the stretch of the branch around it,
+//    from the branch start or the last FloorShift to the next FloorShift, is
+//    one rigid piece, and is carried bodily to where the Fiducial says.
+//  - A Girder (outside the lattice) has a nominal placement from its
+//    CoordinateSetP, and moves the elements it supports by its BodyShiftP.
+//
+// A branch is therefore placed in segments, each ending at a FloorShift or at
+// the branch end. Once a segment is propagated, a Fiducial in it is applied,
+// and only then is the segment final: a FloorShift exit, a later Fiducial, or a
+// Girder may refer to an element only once that element's placement is final.
+
+// Everything the floor pass needs to know across branches.
+struct FloorContext {
+    size_t lat_node = ryml::NONE;
+    std::map<size_t, pals::FloorState> exits;  // FloorShift exit placements
+    std::set<size_t> final_floor;              // elements whose placement is final
+    // Fixed placements that are not a Fiducial's own: the destination of a Fork
+    // into a new branch, when that is not the branch's first element.
+    std::map<size_t, pals::FloorState> fixed;
+};
+
+// The rigid shift (L, S) of an offset/rotation sextet -- a BodyShiftP or the
+// shift part of a CoordinateSetP -- as a placement relative to the frame it
+// shifts (Eq. swww2).
+static pals::FloorState shift_of(const ryml::Tree& t, size_t group) {
+    double xo = 0, yo = 0, zo = 0, xr = 0, yr = 0, zr = 0;
+    get_num_child(t, group, "x_offset", xo);
+    get_num_child(t, group, "y_offset", yo);
+    get_num_child(t, group, "z_offset", zo);
+    get_num_child(t, group, "x_rot", xr);
+    get_num_child(t, group, "y_rot", yr);
+    get_num_child(t, group, "z_rot", zr);
+    pals::FloorState sh;
+    pals::patch_LS(xo, yo, zo, xr, yr, zr, sh.r, sh.q);
+    return sh;
+}
+
+// The placement of an element's exit end.
+static pals::FloorState exit_floor(const ryml::Tree& t, size_t ele,
+                                   const FloorContext& ctx) {
+    auto ex = ctx.exits.find(ele);
+    if (ex != ctx.exits.end()) return ex->second;
+    pals::FloorState f;
+    read_floor(t, ele, f);
+    double len = 0.0;
+    get_num_child(t, ele, "length", len);
+    pals::Vec3 L;
+    pals::Quat S;
+    element_LS(t, ele, child_val_str(t, ele, "kind"), len, L, S);
+    return pals::floor_propagate(f, L, S);
+}
+
+// The frame, relative to an element's entrance placement, about which its
+// BodyShiftP is measured: the middle of a straight element, the middle of the
+// chord of a bend (coordinates.md, s:straight.mis and s:bend.mis). A Patch has
+// no body to shift and is measured from its entrance.
+static pals::FloorState body_reference(const ryml::Tree& t, size_t ele) {
+    std::string kind = child_val_str(t, ele, "kind");
+    double len = 0.0;
+    get_num_child(t, ele, "length", len);
+    pals::FloorState ref;
+    if (kind == "Patch") return ref;
+    if (kind == "Bend") {
+        size_t bp = t.find_child(ele, ryml::to_csubstr("BendP"));
+        double angle = 0.0;
+        if (!get_num_child(t, bp, "angle_ref", angle)) {
+            double g = 0.0;
+            if (get_num_child(t, bp, "g_ref", g)) angle = g * len;
+        }
+        double tilt = 0.0;
+        get_num_child(t, bp, "tilt_ref", tilt);
+        pals::bend_LS(len / 2, angle / 2, tilt, ref.r, ref.q);
+        if (std::fabs(angle) > 1e-12) {
+            // Mid-arc to mid-chord, toward the centre of curvature.
+            double rho = len / angle;
+            double d = rho * (std::cos(angle / 2) - 1.0);
+            pals::FloorState chord;
+            chord.r = pals::Vec3{d * std::cos(tilt), d * std::sin(tilt), 0.0};
+            ref = pals::floor_compose(ref, chord);
+        }
+        return ref;
+    }
+    pals::straight_LS(len / 2, ref.r, ref.q);
+    return ref;
+}
+
+// The placement of the coordinate system an element's CoordinateSetP describes,
+// shifted further by the element's BodyShiftP when `with_body` is set. `ele` is
+// the element holding the group; `prev_exit` the exit of the element before it
+// in its branch (null when there is none, or none whose placement is final
+// yet). Returns false, with a problem recorded, when the origin cannot be
+// placed.
+static bool coordinate_set_frame(const ryml::Tree& t, size_t ele,
+                                 const pals::FloorState* prev_exit,
+                                 const FloorContext& ctx, bool with_body,
+                                 pals::FloorState& out, ProblemList& problems) {
+    std::string name = ele_name(t, ele);
+    size_t cs = t.find_child(ele, ryml::to_csubstr("CoordinateSetP"));
+    std::string origin = "GLOBAL_ORIGIN";
+    std::string ref_pt = "EXIT_END";
+    if (cs != ryml::NONE) {
+        get_str_child(t, cs, "origin_ele", origin);
+        get_str_child(t, cs, "origin_ele_ref_pt", ref_pt);
+    }
+
+    pals::FloorState base;  // the global origin
+    if (origin == "PREVIOUS_ELEMENT") {
+        if (!prev_exit) {
+            add_problem(problems,
+                        "element '" + name +
+                            "': CoordinateSetP.origin_ele is PREVIOUS_ELEMENT, "
+                            "but there is no previous element whose placement "
+                            "is known first",
+                        name);
+            return false;
+        }
+        base = *prev_exit;
+    } else if (origin != "GLOBAL_ORIGIN") {
+        ElementMatches m = match_element_parameters(t, ctx.lat_node, origin);
+        if (!m.valid || m.has_param || m.elements.size() != 1) {
+            add_problem(problems,
+                        "element '" + name + "': CoordinateSetP.origin_ele '" +
+                            origin + "' must name exactly one lattice element (" +
+                            std::to_string(m.elements.size()) + " matched)",
+                        name);
+            return false;
+        }
+        size_t o = m.elements[0];
+        if (!ctx.final_floor.count(o)) {
+            add_problem(problems,
+                        "element '" + name + "': the placement of "
+                        "CoordinateSetP.origin_ele '" + origin +
+                            "' is not known before that of '" + name + "'",
+                        name);
+            return false;
+        }
+        if (ref_pt == "ENTRANCE_END") {
+            read_floor(t, o, base);
+        } else if (ref_pt == "CENTER") {
+            pals::FloorState in;
+            read_floor(t, o, in);
+            std::string okind = child_val_str(t, o, "kind");
+            double len = 0.0;
+            get_num_child(t, o, "length", len);
+            pals::FloorState half;
+            if (okind == "Bend") {
+                size_t bp = t.find_child(o, ryml::to_csubstr("BendP"));
+                double angle = 0.0, tilt = 0.0;
+                if (!get_num_child(t, bp, "angle_ref", angle)) {
+                    double g = 0.0;
+                    if (get_num_child(t, bp, "g_ref", g)) angle = g * len;
+                }
+                get_num_child(t, bp, "tilt_ref", tilt);
+                pals::bend_LS(len / 2, angle / 2, tilt, half.r, half.q);
+            } else {
+                pals::straight_LS(len / 2, half.r, half.q);
+            }
+            base = pals::floor_compose(in, half);
+        } else {
+            base = exit_floor(t, o, ctx);
+        }
+    }
+
+    out = cs != ryml::NONE ? pals::floor_compose(base, shift_of(t, cs)) : base;
+    size_t bs = t.find_child(ele, ryml::to_csubstr("BodyShiftP"));
+    if (with_body && bs != ryml::NONE)
+        out = pals::floor_compose(out, shift_of(t, bs));
+    return true;
+}
+
+// Finish one segment of a branch: carry it bodily to where a Fiducial in it (or
+// a fixed fork destination) puts it, then mark every element of it final.
+// `prev_exit` is the exit of the element just before the segment, when that is
+// final (the end of the previous segment), for a Fiducial placed relative to it.
+static void finish_floor_segment(ryml::Tree& t,
+                                 const std::vector<size_t>& seg,
+                                 const pals::FloorState* prev_exit,
+                                 FloorContext& ctx, ProblemList& problems) {
+    size_t anchor = ryml::NONE;
+    pals::FloorState fixed;
+    for (size_t i = 0; i < seg.size(); ++i) {
+        size_t e = seg[i];
+        bool fiducial = child_val_str(t, e, "kind") == "Fiducial";
+        auto fx = ctx.fixed.find(e);
+        if (!fiducial && fx == ctx.fixed.end()) continue;
+        if (anchor != ryml::NONE) {
+            add_problem(problems,
+                        "elements '" + ele_name(t, anchor) + "' and '" +
+                            ele_name(t, e) +
+                            "' both fix the placement of the same rigid "
+                            "stretch of their branch; only the first is used",
+                        ele_name(t, e));
+            continue;
+        }
+        pals::FloorState where;
+        if (fiducial) {
+            // PREVIOUS_ELEMENT is usable only when the element before the
+            // Fiducial is outside this segment, and so already final.
+            const pals::FloorState* pe = i == 0 ? prev_exit : nullptr;
+            if (!coordinate_set_frame(t, e, pe, ctx, true, where, problems))
+                continue;
+        } else {
+            where = fx->second;
+        }
+        anchor = e;
+        fixed = where;
+    }
+
+    if (anchor != ryml::NONE) {
+        pals::FloorState now;
+        read_floor(t, anchor, now);
+        pals::FloorState motion =
+            pals::floor_compose(fixed, pals::floor_inverse(now));
+        for (size_t e : seg) {
+            pals::FloorState f;
+            read_floor(t, e, f);
+            write_floor(t, e, pals::floor_compose(motion, f));
+        }
+    }
+    for (size_t e : seg) ctx.final_floor.insert(e);
+}
+
+// Write a placement into an element's ShiftedFloorP group (creating it).
+static void write_shifted_floor(ryml::Tree& t, size_t ele,
+                                const pals::FloorState& s) {
+    size_t fp = find_or_add_map_child(t, ele, "ShiftedFloorP");
+    set_num_child(t, fp, "x", s.r.x);
+    set_num_child(t, fp, "y", s.r.y);
+    set_num_child(t, fp, "z", s.r.z);
+    pals::FloorAngles a = pals::floor_angles_from_quat(s.q);
+    set_num_child(t, fp, "theta", a.theta);
+    set_num_child(t, fp, "phi", a.phi);
+    set_num_child(t, fp, "psi", a.psi);
+}
+
+// The `girders` dict of the PALS node: girder name -> definition.
+static std::vector<size_t> girder_defs(const ryml::Tree& t) {
+    std::vector<size_t> out;
+    size_t pals = t.find_child(t.root_id(), ryml::to_csubstr("PALS"));
+    if (pals == ryml::NONE) return out;
+    size_t g = t.find_child(pals, ryml::to_csubstr("girders"));
+    if (g == ryml::NONE || !t.is_map(g)) return out;
+    for (size_t c = t.first_child(g); c != ryml::NONE; c = t.next_sibling(c))
+        if (t.is_map(c) && t.has_key(c) &&
+            child_val_str(t, c, "kind") == "Girder")
+            out.push_back(c);
+    return out;
+}
+
+// Place the girders and fill in every element's ShiftedFloorP
+// (shiftedfloor.md): its placement with its BodyShiftP and the shifts of the
+// girders that support it (coordinates.md, s:girder.mis).
+//
+// A girder's nominal placement comes from its CoordinateSetP and is its FloorP;
+// its BodyShiftP then moves it, and with it everything it supports, as one
+// rigid body. Written as a rigid motion of the floor, the girder G moves things
+// by M_G = F_G0 * Shift_G * F_G0^-1, after the motion of the girder supporting
+// it, if any. An element E with reference frame F_E0 and its own shift Shift_E
+// ends up at M_G * F_E0 * Shift_E, which is Eqs. lwwl-vewe.
+static void place_girders_and_shifts(ryml::Tree& t, FloorContext& ctx,
+                                     ProblemList& problems) {
+    std::vector<size_t> girders = girder_defs(t);
+
+    // What each girder supports, and so which girder supports what.
+    std::map<size_t, size_t> support;  // element or girder -> its girder
+    for (size_t g : girders) {
+        std::string gname = ele_name(t, g);
+        size_t gp = t.find_child(g, ryml::to_csubstr("GirderP"));
+        std::string spec;
+        if (!get_str_child(t, gp, "elements", spec)) {
+            add_problem(problems,
+                        "Girder '" + gname + "': GirderP.elements names nothing "
+                        "to support",
+                        gname);
+            continue;
+        }
+        std::vector<size_t> others;
+        for (size_t o : girders)
+            if (o != g) others.push_back(o);
+        ElementMatches m =
+            match_element_parameters(t, ctx.lat_node, spec, others);
+        if (!m.valid || m.has_param) {
+            add_problem(problems,
+                        "Girder '" + gname + "': GirderP.elements '" + spec +
+                            "' is not an element set",
+                        gname);
+            continue;
+        }
+        if (m.elements.empty())
+            add_problem(problems,
+                        "Girder '" + gname + "': GirderP.elements '" + spec +
+                            "' matches nothing in the expanded lattice",
+                        gname, Severity::Warning);
+        for (size_t e : m.elements) {
+            auto it = support.find(e);
+            if (it != support.end() && it->second != g) {
+                add_problem(problems,
+                            "'" + ele_name(t, e) + "' is supported by both "
+                            "Girder '" + ele_name(t, it->second) +
+                                "' and Girder '" + gname + "'",
+                            ele_name(t, e));
+                continue;
+            }
+            support[e] = g;
+        }
+    }
+
+    // Each girder's nominal placement and motion, parents first.
+    std::map<size_t, pals::FloorState> nominal, motion;
+    std::set<size_t> failed;
+    std::function<bool(size_t, std::set<size_t>&)> place =
+        [&](size_t g, std::set<size_t>& active) -> bool {
+        if (motion.count(g)) return true;
+        if (failed.count(g)) return false;
+        std::string gname = ele_name(t, g);
+        size_t cs = t.find_child(g, ryml::to_csubstr("CoordinateSetP"));
+        std::string origin;
+        if (cs != ryml::NONE && get_str_child(t, cs, "origin_ele", origin) &&
+            origin == "PREVIOUS_ELEMENT") {
+            add_problem(problems,
+                        "Girder '" + gname + "': CoordinateSetP.origin_ele may "
+                        "not be PREVIOUS_ELEMENT -- a Girder sits in no branch",
+                        gname);
+            failed.insert(g);
+            return false;
+        }
+        pals::FloorState f0;
+        if (!coordinate_set_frame(t, g, nullptr, ctx, false, f0, problems)) {
+            failed.insert(g);
+            return false;
+        }
+        pals::FloorState parent;  // identity: no supporting girder
+        auto sp = support.find(g);
+        if (sp != support.end()) {
+            if (active.count(sp->second)) {
+                add_problem(problems,
+                            "Girder '" + gname + "' is part of a circular chain "
+                            "of girder support",
+                            gname);
+                failed.insert(g);
+                return false;
+            }
+            active.insert(g);
+            bool ok = place(sp->second, active);
+            active.erase(g);
+            if (!ok) {
+                failed.insert(g);
+                return false;
+            }
+            parent = motion[sp->second];
+        }
+        pals::FloorState shift;
+        size_t bs = t.find_child(g, ryml::to_csubstr("BodyShiftP"));
+        if (bs != ryml::NONE) shift = shift_of(t, bs);
+        nominal[g] = f0;
+        motion[g] = pals::floor_compose(
+            parent, pals::floor_compose(
+                        f0, pals::floor_compose(shift, pals::floor_inverse(f0))));
+        return true;
+    };
+    for (size_t g : girders) {
+        std::set<size_t> active{g};
+        if (!place(g, active)) continue;
+        write_floor(t, g, nominal[g]);
+        write_shifted_floor(t, g, pals::floor_compose(motion[g], nominal[g]));
+    }
+
+    // ShiftedFloorP of every element of every branch.
+    size_t branches = t.find_child(ctx.lat_node, ryml::to_csubstr("branches"));
+    if (branches == ryml::NONE || !t.is_seq(branches)) return;
+    for (size_t entry = t.first_child(branches); entry != ryml::NONE;
+         entry = t.next_sibling(entry)) {
+        if (!t.is_map(entry)) continue;
+        size_t branch = t.first_child(entry);
+        if (branch == ryml::NONE || !t.is_map(branch)) continue;
+        size_t line = t.find_child(branch, ryml::to_csubstr("line"));
+        if (line == ryml::NONE || !t.is_seq(line)) continue;
+        for (size_t le = t.first_child(line); le != ryml::NONE;
+             le = t.next_sibling(le)) {
+            size_t ele = t.is_map(le) ? t.first_child(le) : ryml::NONE;
+            if (ele == ryml::NONE || !t.has_key(ele) || !t.is_map(ele)) continue;
+            std::string kind = child_val_str(t, ele, "kind");
+            if (kind == "Placeholder") continue;
+            pals::FloorState in;
+            if (!read_floor(t, ele, in)) continue;
+            // The BodyShiftP of a FloorShift or Fiducial places the element
+            // rather than misaligning it, so its two placements are the same.
+            if (kind == "FloorShift" || kind == "Fiducial") {
+                write_shifted_floor(t, ele, in);
+                continue;
+            }
+            pals::FloorState ref = body_reference(t, ele);
+            pals::FloorState f0 = pals::floor_compose(in, ref);
+            pals::FloorState body = f0;
+            size_t bs = t.find_child(ele, ryml::to_csubstr("BodyShiftP"));
+            if (bs != ryml::NONE)
+                body = pals::floor_compose(body, shift_of(t, bs));
+            auto sp = support.find(ele);
+            if (sp != support.end() && motion.count(sp->second))
+                body = pals::floor_compose(motion[sp->second], body);
+            write_shifted_floor(
+                t, ele, pals::floor_compose(body, pals::floor_inverse(ref)));
+        }
+    }
 }
 
 // Stamp `element_index: n` on an element definition: the element's position in
@@ -3786,25 +4297,52 @@ static void check_branch_reference(const ryml::Tree& t, size_t branch,
                     "parameters cannot be computed");
 }
 
+// True if `ele` is the first element of the line of one of the branches.
+static bool is_first_of_line(const ryml::Tree& t, size_t branches, size_t ele) {
+    for (size_t entry = t.first_child(branches); entry != ryml::NONE;
+         entry = t.next_sibling(entry)) {
+        size_t branch = t.is_map(entry) ? t.first_child(entry) : ryml::NONE;
+        if (branch == ryml::NONE || !t.is_map(branch)) continue;
+        size_t line = t.find_child(branch, ryml::to_csubstr("line"));
+        if (line == ryml::NONE || !t.is_seq(line)) continue;
+        for (size_t le = t.first_child(line); le != ryml::NONE;
+             le = t.next_sibling(le)) {
+            if (!t.is_map(le)) continue;
+            size_t def = t.first_child(le);
+            if (def == ryml::NONE || !t.has_key(def)) continue;
+            if (def == ele) return true;
+            break;
+        }
+    }
+    return false;
+}
+
 // Walk every branch of the expanded lattice and run _element_bookkeeper on each
 // element in order, threading each element's results (persisted in the tree)
 // into the next. After the branch's elements, a `branch_end` Placeholder is
 // appended and bookkept to hold the branch's final floor placement and reference
-// parameters (the downstream end of the last element).
+// parameters (the downstream end of the last element). The floor placement is
+// settled segment by segment as the walk goes (see FLOOR PLACEMENT), and once
+// every branch is placed the girders are, and every element's ShiftedFloorP.
 //
-// A Fork whose `propagate_reference` is true seeds its destination branch's
-// beginning element from its own reference/floor. Branches are visited in order
-// and a new branch is always appended after the Fork that creates it, so by the
-// time a forked branch is reached its Fork has been bookkept: `fork_seed` maps
-// the destination element (by node id, matching the raw
-// `destination_pointer`) to that Fork. `destination_pointer` still holds the
-// work-tree node id here; it is remapped to the split-out tree only later.
+// A Fork into a new branch seeds that branch's beginning element from its own
+// floor, and from its reference when its `propagate_reference` is true; when
+// the destination is further into the branch, its placement is fixed to the
+// Fork's instead. Branches are visited in order and a new branch is always
+// appended after the Fork that creates it, so by the time a forked branch is
+// reached its Fork has been bookkept and placed: `fork_seed` maps the
+// destination element (by node id, matching the raw `destination_pointer`) to
+// that Fork. `destination_pointer` still holds the work-tree node id here; it is
+// remapped to the split-out tree only later.
 static void run_element_bookkeeper(ryml::Tree& t, size_t lat_node,
                                    ProblemList& problems) {
     size_t branches = t.find_child(lat_node, ryml::to_csubstr("branches"));
     if (branches == ryml::NONE || !t.is_seq(branches)) return;
 
-    std::map<size_t, size_t> fork_seed;  // destination element -> its Fork
+    FloorContext ctx;
+    ctx.lat_node = lat_node;
+    std::map<size_t, ForkSeed> fork_seed;  // destination element -> its Fork
+    std::vector<size_t> forks;             // in walk order
 
     for (size_t entry = t.first_child(branches); entry != ryml::NONE;
          entry = t.next_sibling(entry)) {
@@ -3814,8 +4352,31 @@ static void run_element_bookkeeper(ryml::Tree& t, size_t lat_node,
         size_t line = t.find_child(branch, ryml::to_csubstr("line"));
         if (line == ryml::NONE || !t.is_seq(line)) continue;
 
+        // A Fork's placement is final once its segment is, so the fixed
+        // placements of destinations deeper into new branches are recorded only
+        // then; they are all in place before the branches they fix are walked.
+        for (size_t f : forks) {
+            size_t forkp = t.find_child(f, ryml::to_csubstr("ForkP"));
+            std::string ptr = child_val_str(t, forkp, "destination_pointer");
+            std::string nb = child_val_str(t, forkp, "new_branch");
+            if (ptr.empty() || nb.empty() || nb == "null") continue;
+            size_t dest;
+            try {
+                dest = static_cast<size_t>(std::stoull(ptr));
+            } catch (...) {
+                continue;
+            }
+            pals::FloorState ff;
+            if (!fork_seed.count(dest) && read_floor(t, f, ff))
+                ctx.fixed[dest] = ff;
+        }
+        forks.clear();
+
         size_t prev = ryml::NONE;
         size_t index = 0;  // position in `line` of the entry being visited
+        std::vector<size_t> seg;
+        bool have_seg_entry = false;
+        pals::FloorState seg_entry;  // exit of the element before the segment
         for (size_t le = t.first_child(line); le != ryml::NONE;
              le = t.next_sibling(le)) {
             ++index;
@@ -3826,22 +4387,37 @@ static void run_element_bookkeeper(ryml::Tree& t, size_t lat_node,
             if (def == ryml::NONE || !t.has_key(def)) continue;
 
             bool first = (prev == ryml::NONE);
-            size_t seed = ryml::NONE;
+            ForkSeed seed;
             if (first) {
                 auto it = fork_seed.find(def);
                 if (it != fork_seed.end()) seed = it->second;
             }
-            _element_bookkeeper(t, prev, def, problems, seed);
+            _element_bookkeeper(t, prev, def, problems, ctx.exits, seed);
             set_element_index(t, def, index);
             if (first) check_branch_reference(t, branch, def, problems);
+            seg.push_back(def);
 
-            // Record where a Fork propagates its reference/floor to. Propagation
-            // applies only when the destination is the beginning element of a
-            // *new* branch (fork.md): a fork into an existing branch, which
-            // handle_fork resolves to `new_branch: null`, never seeds. The
-            // default (materialized above) is propagate_reference: true; only an
-            // explicit false opts out.
-            if (child_val_str(t, def, "kind") == "Fork") {
+            std::string kind = child_val_str(t, def, "kind");
+            if (kind == "FloorShift") {
+                // The segment ends here: settle it, then place the exit, which
+                // may lean on anything already final -- this segment included.
+                finish_floor_segment(t, seg, have_seg_entry ? &seg_entry : nullptr,
+                                     ctx, problems);
+                seg.clear();
+                pals::FloorState in, out;
+                read_floor(t, def, in);
+                if (!coordinate_set_frame(t, def, &in, ctx, true, out, problems))
+                    out = in;
+                ctx.exits[def] = out;
+                seg_entry = out;
+                have_seg_entry = true;
+            }
+
+            // Record where a Fork leads. Seeding applies only when the
+            // destination is the beginning element of a *new* branch (fork.md):
+            // a fork into an existing branch, which handle_fork resolves to
+            // `new_branch: null`, never seeds.
+            if (kind == "Fork") {
                 size_t forkp = t.find_child(def, ryml::to_csubstr("ForkP"));
                 std::string prop =
                     forkp != ryml::NONE
@@ -3856,9 +4432,12 @@ static void run_element_bookkeeper(ryml::Tree& t, size_t lat_node,
                         ? child_val_str(t, forkp, "new_branch")
                         : "";
                 bool new_branch = !nb.empty() && nb != "null";
-                if (prop != "false" && !ptr.empty() && new_branch) {
+                if (!ptr.empty() && new_branch) {
                     try {
-                        fork_seed[static_cast<size_t>(std::stoull(ptr))] = def;
+                        size_t dest = static_cast<size_t>(std::stoull(ptr));
+                        if (is_first_of_line(t, branches, dest))
+                            fork_seed[dest] = ForkSeed{def, prop != "false"};
+                        forks.push_back(def);
                     } catch (...) {
                     }
                 }
@@ -3875,12 +4454,17 @@ static void run_element_bookkeeper(ryml::Tree& t, size_t lat_node,
                       t.key(prev) == ryml::to_csubstr("branch_end");
         if (prev != ryml::NONE && !capped) {
             size_t cap = append_branch_end(t, line);
-            _element_bookkeeper(t, prev, cap, problems);
+            _element_bookkeeper(t, prev, cap, problems, ctx.exits);
             // Appended past the last entry the loop counted, so it takes the
             // next index.
             set_element_index(t, cap, index + 1);
+            seg.push_back(cap);
         }
+        finish_floor_segment(t, seg, have_seg_entry ? &seg_entry : nullptr, ctx,
+                             problems);
     }
+
+    place_girders_and_shifts(t, ctx, problems);
 }
 
 // Map every element definition in the expanded lattice to the
@@ -4289,14 +4873,12 @@ static void make_expanded_and_adjunct(ParsedData* comb,
     deep_copy_tracked(t, t.root_id(), comb->tree, comb->tree.root_id(),
                       work.provenance);
 
-    // The `facility` list divided at `expand_lattice` (lattice-construction.md,
-    // s:lattice.expand). With no such node everything is the pre-expansion list
-    // and `post` is empty, which is the usual case.
-    FacilitySplit facility = split_facility(t);
-
-    // The pre-expansion `set` commands run first, on the element definitions,
-    // so expansion copies the values they write into every use of a definition.
-    run_pre_expansion_sets(t, facility.pre, work.provenance, problems);
+    // The `facility` `set` commands run first, on the element definitions, so
+    // expansion copies the values they write into every use of a definition.
+    check_definitions(t, problems);
+    run_pre_expansion_sets(t, pals_list_entries(t, "facility"), work.provenance,
+                           problems);
+    const std::vector<size_t> post = pals_list_entries(t, "post_expansion");
 
     std::map<std::string, size_t> emap;
     make_ele_map(emap, t, t.root_id());
@@ -4332,6 +4914,7 @@ static void make_expanded_and_adjunct(ParsedData* comb,
         // Runs after expand, not inside it: a Fork appends branches as it goes,
         // so only once expand has returned does `branches` hold them all.
         strip_branch_kinds(t, lat_node, work.provenance);
+        remove_placeholders(t, lat_node, work.provenance);
 
         // Likewise after expand, so every branch -- root and forked alike -- has
         // had its chance to fill in, and an empty one really is empty.
@@ -4364,15 +4947,15 @@ static void make_expanded_and_adjunct(ParsedData* comb,
         // appear in the correspondence map.
         run_element_bookkeeper(t, lat_node, problems);
 
-        // Anything after `expand_lattice` acts on the lattice just built: its
-        // sets reach each expanded copy of an element separately, and the
-        // controllers are then applied again (over both lists) so they stay
-        // authoritative over any parameter a set touched. The bookkeeper runs a
-        // second time to recompute what those writes invalidated -- reference
-        // and floor parameters, and the family members execute_set dropped.
-        if (!facility.post.empty()) {
+        // `post_expansion` acts on the lattice just built: its sets reach each
+        // expanded copy of an element separately, and the controllers are then
+        // applied again (over both lists) so they stay authoritative over any
+        // parameter a set touched. The bookkeeper runs a second time to
+        // recompute what those writes invalidated -- reference and floor
+        // parameters, and the family members execute_set dropped.
+        if (!post.empty()) {
             std::vector<SetTarget> set_writes;
-            run_post_expansion_sets(t, lat_node, facility.post, work.provenance,
+            run_post_expansion_sets(t, lat_node, post, work.provenance,
                                     problems, &set_writes);
             // These writes are inputs like any other, but they land after the
             // snapshot above; join them to it before the second bookkeeper pass

@@ -256,27 +256,26 @@ TEST_CASE("the components of a BeamLine are all accepted",
     REQUIRE(count_with(ps, "unknown parameter") == 0);
 }
 
-TEST_CASE("`facility` is rejected as the name of anything",
-          "[check][problems]") {
-    // lattice-elements.md: `facility` where a branch name goes selects the
-    // definitions the facility node itself holds, so nothing else may answer to
-    // it. Reported wherever a construct is named -- a facility entry, a `line`
-    // entry, or a branch, the last of which carries no kind to be found by.
+TEST_CASE("a reserved word cannot be a name", "[check][problems]") {
+    // notation.md, s:reserved: SELF and PARAMETER stand for the element and
+    // parameter a set writes. Reported wherever a construct is named -- a
+    // facility entry, a `line` entry, or a branch, the last of which carries no
+    // kind to be found by.
     auto ps = problems_for("PALS:\n"
                            "  facility:\n"
-                           "    - facility:\n"
+                           "    - SELF:\n"
                            "        kind: Quadrupole\n"
                            "        length: 1\n");
-    REQUIRE(count_with(ps, "reserved name") == 1);
+    REQUIRE(count_with(ps, "reserved word") == 1);
 
     ps = problems_for("PALS:\n"
                       "  facility:\n"
                       "    - main:\n"
                       "        kind: BeamLine\n"
                       "        line:\n"
-                      "          - facility:\n"
+                      "          - PARAMETER:\n"
                       "              kind: Marker\n");
-    REQUIRE(count_with(ps, "reserved name") == 1);
+    REQUIRE(count_with(ps, "reserved word") == 1);
 
     ps = problems_for("PALS:\n"
                       "  facility:\n"
@@ -288,17 +287,34 @@ TEST_CASE("`facility` is rejected as the name of anything",
                       "    - lat:\n"
                       "        kind: Lattice\n"
                       "        branches:\n"
-                      "          - facility:\n"
+                      "          - SELF:\n"
                       "              inherit: main\n");
-    REQUIRE(count_with(ps, "reserved name") == 1);
+    REQUIRE(count_with(ps, "reserved word") == 1);
 
-    // The `facility` list itself is not a construct named `facility`.
+    // `facility` is not reserved.
     ps = problems_for("PALS:\n"
                       "  facility:\n"
-                      "    - q1:\n"
+                      "    - facility:\n"
                       "        kind: Quadrupole\n"
                       "        length: 1\n");
-    REQUIRE(count_with(ps, "reserved name") == 0);
+    REQUIRE(count_with(ps, "reserved") == 0);
+}
+
+TEST_CASE("a name breaking the name syntax is reported", "[check][problems]") {
+    // names.md, s:names: a letter or underscore, then letters, digits and
+    // underscores.
+    auto ps = problems_for("PALS:\n"
+                           "  facility:\n"
+                           "    - 1q:\n"
+                           "        kind: Quadrupole\n"
+                           "    - q-2:\n"
+                           "        kind: Quadrupole\n"
+                           "    - constants:\n"
+                           "        - c.1: 3\n"
+                           "    - _q3:\n"
+                           "        kind: Quadrupole\n");
+    REQUIRE(count_with(ps, "is not a valid name") == 3);
+    REQUIRE(count_with(ps, "'_q3'") == 0);
 }
 
 TEST_CASE("groups with no fixed vocabulary are left alone",
@@ -318,9 +334,7 @@ TEST_CASE("groups with no fixed vocabulary are left alone",
                            "            NotAGroupP: 3\n"
                            "        TrackingP:\n"
                            "          SciBmad:\n"
-                           "            ds_step: 0.3\n"
-                           "        GirderP:\n"
-                           "          undocumented_so_far: 1\n");
+                           "            ds_step: 0.3\n");
 
     REQUIRE(count_with(ps, "unknown parameter") == 0);
     REQUIRE(count_with(ps, "unknown parameter group") == 0);
@@ -491,8 +505,8 @@ TEST_CASE("a misspelled key of the PALS root node is reported",
 
 TEST_CASE("the documented keys of the PALS root node are not reported",
           "[check][problems]") {
-    // Every key of s:palsroot, plus `phase_space_coordinates` (coordinates.md)
-    // and `include` (fundamentals.md, s:include). `load` has its own tests.
+    // Every key of s:palsroot (top-level.md). `load` and `include` have their
+    // own tests.
     auto ps = problems_for("PALS:\n"
                            "  version: 1\n"
                            "  authors:\n"
@@ -502,7 +516,7 @@ TEST_CASE("the documented keys of the PALS root node are not reported",
                            "    - a note\n"
                            "  reminders:\n"
                            "    - a reminder\n"
-                           "  phase_space_coordinates: standard\n"
+                           "  phase_space_coordinates: KINETIC_AND_MOMENTUM\n"
                            "  extension_labels:\n"
                            "    names:\n"
                            "      Bmad: bmad-specific data\n"
@@ -511,9 +525,28 @@ TEST_CASE("the documented keys of the PALS root node are not reported",
                            "        kind: Quadrupole\n"
                            "        length: 1\n"
                            "        Bmad:\n"
-                           "          bmad_key: Quadrupole\n");
+                           "          bmad_key: Quadrupole\n"
+                           "  post_expansion:\n"
+                           "    - set:\n"
+                           "        parameter: q1>length\n"
+                           "        value: 2\n"
+                           "  girders:\n"
+                           "    g1:\n"
+                           "      kind: Girder\n"
+                           "      GirderP:\n"
+                           "        elements: q1\n"
+                           "  adjustments:\n"
+                           "    - optimize:\n"
+                           "        - vary:\n"
+                           "            parameter: q1>MagneticMultipoleP.Kn1\n"
+                           "        - target:\n"
+                           "            parameter: fractional_tune_a\n"
+                           "            value: 0.37*twopi\n");
 
     REQUIRE(count_with(ps, "PALS node:") == 0);
+    REQUIRE(count_with(ps, "adjustments") == 0);
+    REQUIRE(count_with(ps, "Girder") == 0);
+    REQUIRE(count_with(ps, "post_expansion") == 0);
     // The registered name covers the element data it was registered for.
     REQUIRE(count_with(ps, "unknown parameter") == 0);
 }

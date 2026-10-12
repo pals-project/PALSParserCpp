@@ -1,8 +1,8 @@
 #include "test_helpers.h"
 
-// `set` commands: miscellaneous.md (s:set) for the syntax, and
-// lattice-construction.md (s:lattice.expand, s:expand.lat) for where a set acts
-// depending on which side of `expand_lattice` it sits on.
+// `set` commands: parameter-values-and-controllers.md (s:set) for the syntax,
+// and top-level.md (s:facility) for where a set acts depending on whether it
+// sits in `facility` or `post_expansion`.
 
 namespace {
 
@@ -35,8 +35,10 @@ void free_all(struct lattices& lat) {
 }
 
 // A file whose `facility` list is exactly `body` (10-space indented entries),
-// followed by a lattice built from the beamline named `line_name` and a `use`.
-std::string facility_file(const std::string& body, const char* line_name) {
+// followed by a lattice built from the beamline named `line_name` and a `use`,
+// and then a `post_expansion` list holding `post` when that is not empty.
+std::string facility_file(const std::string& body, const char* line_name,
+                          const std::string& post = "") {
     return "PALS:\n"
            "  facility:\n" +
            body + "    - lat1:\n"
@@ -45,7 +47,8 @@ std::string facility_file(const std::string& body, const char* line_name) {
                   "          - " +
            line_name +
            "\n"
-           "    - use: \"lat1\"\n";
+           "    - use: \"lat1\"\n" +
+           (post.empty() ? "" : "  post_expansion:\n" + post);
 }
 
 // The value of `group.param` on the `index`-th element named `ele` in the
@@ -98,29 +101,32 @@ const char* BEGIN_ENTRY =
 
 TEST_CASE("a set writes every element its pattern matches",
           "[expr][lattices][set]") {
-    // miscellaneous.md: `PARAMETER` is the current value of the parameter being
-    // written and `SELF` reaches the rest of the element.
+    // s:set: `PARAMETER` is the current value of the parameter being written
+    // and `SELF` reaches the rest of the element.
     const std::string doc =
         facility_file(std::string(
+                      "    - B1a:\n"
+                      "        kind: Bend\n"
+                      "        length: 1.0\n"
+                      "        BendP:\n"
+                      "          e1: 0.1\n"
+                      "          g_ref: 0.02\n"
+                      "    - B1b:\n"
+                      "        kind: Bend\n"
+                      "        length: 1.0\n"
+                      "        BendP:\n"
+                      "          e1: 0.3\n"
+                      "          g_ref: 0.02\n"
+                      "    - Q1:\n"
+                      "        kind: Quadrupole\n"
+                      "        length: 0.5\n"
                       "    - main:\n"
                       "        kind: BeamLine\n"
                       "        line:\n") +
                       BEGIN_ENTRY +
-                      "          - B1a:\n"
-                      "              kind: Bend\n"
-                      "              length: 1.0\n"
-                      "              BendP:\n"
-                      "                e1: 0.1\n"
-                      "                g_ref: 0.02\n"
-                      "          - B1b:\n"
-                      "              kind: Bend\n"
-                      "              length: 1.0\n"
-                      "              BendP:\n"
-                      "                e1: 0.3\n"
-                      "                g_ref: 0.02\n"
-                      "          - Q1:\n"
-                      "              kind: Quadrupole\n"
-                      "              length: 0.5\n"
+                      "          - B1a\n"
+                      "          - B1b\n"
+                      "          - Q1\n"
                       "    - set:\n"
                       "        parameter: B1.*>BendP.e1\n"
                       "        value: 2*PARAMETER + atan(SELF.BendP.g_ref)\n",
@@ -139,8 +145,7 @@ TEST_CASE("a set writes every element its pattern matches",
 
 TEST_CASE("a set only reaches elements defined before it",
           "[expr][lattices][set]") {
-    // The example of lattice-construction.md, s:lattice.expand: Q2 is defined
-    // after the set, so the set does not touch it.
+    // Q2 is defined after the set, so the set does not touch it.
     const std::string doc =
         facility_file("    - Q1:\n"
                       "        kind: Quadrupole\n"
@@ -176,11 +181,13 @@ TEST_CASE("a set only reaches elements defined before it",
 
 namespace {
 
-// The example of lattice-elements.md (element name matching), as a whole file:
-// `q1` defined as a facility entry, a second `q1` written inside `myline`, and a
-// branch inheriting myline so expansion makes a third. `body` is the facility
-// entries that follow, which is where each test puts its sets.
-std::string facility_qualifier_file(const std::string& body) {
+// The example of names.md (s:name.matching), as a whole file: `q1` defined as a
+// facility entry, a second `q1` written inside `myline`, and a branch
+// inheriting myline so expansion makes a third. `body` is the facility entries
+// that follow, and `post` the post_expansion list, which is where each test
+// puts its sets.
+std::string facility_qualifier_file(const std::string& body,
+                                    const std::string& post = "") {
     return "PALS:\n"
            "  facility:\n"
            "    - q1:\n"
@@ -199,7 +206,7 @@ std::string facility_qualifier_file(const std::string& body) {
            "          - mybranch:\n"
            "              inherit: myline\n"
            "    - use: \"mylat\"\n" +
-           body;
+           body + (post.empty() ? "" : "  post_expansion:\n" + post);
 }
 
 }  // namespace
@@ -245,9 +252,7 @@ TEST_CASE("a set on a bare line reference gives it values of its own",
 
     // The definition the reference points at is not what was named, so it keeps
     // the length it was given.
-    struct param_value v =
-        get_lattice_parameter_value(a.full_expanded, a.adjunct,
-                                    "facility>>q1>length");
+    struct param_value v = get_parameter_value(a.adjunct, "q1>length");
     REQUIRE(v.kind == PARAM_VALUE_NUMBER);
     REQUIRE(close(v.number, 0.1));
 
@@ -257,10 +262,10 @@ TEST_CASE("a set on a bare line reference gives it values of its own",
 
 TEST_CASE("an unqualified set targets the definition, not the references to it",
           "[expr][lattices][set]") {
-    // s:expand.lat: without expand_lattice a set "targets the single q1
-    // definition", and every use of it follows along. If the bare `- q1` in the
-    // line were written too, its 0.6 would override the definition's 0.7 in the
-    // expanded lattice.
+    // names.md: before expansion an unqualified name reaches the q1 defined
+    // under facility, and every use of it follows along. If the bare `- q1` in
+    // the line were written too, its 0.6 would override the definition's 0.7 in
+    // the expanded lattice.
     const std::string doc =
         "PALS:\n"
         "  facility:\n"
@@ -288,21 +293,18 @@ TEST_CASE("an unqualified set targets the definition, not the references to it",
     free_all(lat);
 }
 
-TEST_CASE("a set qualified with `facility>>` writes only the definition",
+TEST_CASE("an unqualified set writes the facility definition only",
           "[expr][lattices][set]") {
-    // lattice-elements.md: `facility>>q1` names the definition of q1 outside of
-    // myline and mybranch. Before expansion it is the one thing a set can name
-    // that the plain `q1` -- which reaches the copy inside myline -- does not.
+    // names.md: before expansion `q1` names the definition standing under
+    // facility, not the q1 written inside myline.
     const std::string doc =
         facility_qualifier_file("    - sets:\n"
-                                "        - facility>>q1>length: 0.4\n");
+                                "        - q1>length: 0.4\n");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
     REQUIRE(joined(lat) == "");
 
-    struct param_value v =
-        get_lattice_parameter_value(lat.full_expanded, lat.adjunct,
-                                    "facility>>q1>length");
+    struct param_value v = get_parameter_value(lat.adjunct, "q1>length");
     REQUIRE(v.kind == PARAM_VALUE_NUMBER);
     REQUIRE(close(v.number, 0.4));
 
@@ -312,26 +314,19 @@ TEST_CASE("a set qualified with `facility>>` writes only the definition",
     free_all(lat);
 }
 
-TEST_CASE("a `facility>>` set after expand_lattice still writes the definition",
+TEST_CASE("a post_expansion set writes the expanded lattice, not the definitions",
           "[expr][lattices][set]") {
-    // A post-expansion set otherwise acts on the expanded lattice, and the
-    // definitions sit outside it -- naming them is what the qualifier is for.
-    const std::string doc =
-        facility_qualifier_file("    - expand_lattice\n"
-                                "    - sets:\n"
-                                "        - facility>>q1>length: 0.4\n"
-                                "        - mybranch>>q1>length: 0.5\n");
+    const std::string doc = facility_qualifier_file(
+        "", "    - sets:\n"
+            "        - q1>length: 0.5\n");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
     REQUIRE(joined(lat) == "");
 
-    struct param_value v =
-        get_lattice_parameter_value(lat.full_expanded, lat.adjunct,
-                                    "facility>>q1>length");
-    REQUIRE(v.kind == PARAM_VALUE_NUMBER);
-    REQUIRE(close(v.number, 0.4));
-
     REQUIRE(close(one_param(lat.full_expanded, "q1", nullptr, "length"), 0.5));
+    struct param_value v = get_parameter_value(lat.adjunct, "q1>length");
+    REQUIRE(v.kind == PARAM_VALUE_NUMBER);
+    REQUIRE(close(v.number, 0.1));
 
     free_all(lat);
 }
@@ -451,10 +446,11 @@ TEST_CASE("the compact sets form writes each pair", "[expr][lattices][set]") {
     free_all(lat);
 }
 
-TEST_CASE("without expand_lattice a set writes the single definition",
+TEST_CASE("a facility set writes the single definition",
           "[expr][lattices][set]") {
-    // s:expand.lat: the repeated element has not been instantiated yet, so the
-    // set targets the one definition and all three copies inherit its value.
+    // top-level.md, s:facility: the repeated element has not been instantiated
+    // yet, so the set targets the one definition and all three copies inherit
+    // its value.
     const std::string doc =
         facility_file("    - q1:\n"
                       "        kind: Quadrupole\n"
@@ -482,9 +478,9 @@ TEST_CASE("without expand_lattice a set writes the single definition",
     free_all(lat);
 }
 
-TEST_CASE("after expand_lattice a set reaches each expanded copy",
+TEST_CASE("a post_expansion set reaches each expanded copy",
           "[expr][lattices][set]") {
-    // The point of `expand_lattice`: with the lattice built, the three copies of
+    // The point of `post_expansion`: with the lattice built, the three copies of
     // `q1` are separate elements and the set writes each of them. The value used
     // here depends on the copy's own s_position, which only exists after
     // expansion, so it also pins down that the bookkeeper has already run.
@@ -499,12 +495,11 @@ TEST_CASE("after expand_lattice a set reaches each expanded copy",
                       "        line:\n" +
                       std::string(BEGIN_ENTRY) +
                       "          - q1:\n"
-                      "              repeat: 3\n"
-                      "    - expand_lattice\n"
+                      "              repeat: 3\n",
+                      "main",
                       "    - set:\n"
                       "        parameter: lat1>>>q1>MagneticMultipoleP.Kn1L\n"
-                      "        value: PARAMETER + SELF.s_position\n",
-                      "main");
+                      "        value: PARAMETER + SELF.s_position\n");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
     REQUIRE(joined(lat) == "");
@@ -539,12 +534,11 @@ TEST_CASE("a post-expansion set makes the bookkeeper redo the family",
                       "              kind: Quadrupole\n"
                       "              length: 0.5\n"
                       "              MagneticMultipoleP:\n"
-                      "                Kn1L: 0.75\n"
-                      "    - expand_lattice\n"
+                      "                Kn1L: 0.75\n",
+                      "main",
                       "    - set:\n"
                       "        parameter: q1>MagneticMultipoleP.Kn1L\n"
-                      "        value: PARAMETER * 2\n",
-                      "main");
+                      "        value: PARAMETER * 2\n");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
     REQUIRE(joined(lat) == "");
@@ -561,7 +555,7 @@ TEST_CASE("a post-expansion set makes the bookkeeper redo the family",
 
 TEST_CASE("a pre-expansion set nullifies the rest of its family",
           "[expr][lattices][set]") {
-    // miscellaneous.md, the interdependent-parameter example verbatim: s1
+    // s:set, the interdependent-parameter example verbatim: s1
     // states its sextupole skew component as Ks2, and a set then states the
     // same component as Ks2L. The set nullifies the Ks2 the definition gave, so
     // the two are not left inconsistent -- the component is what the set says,
@@ -610,12 +604,11 @@ TEST_CASE("a post-expansion set that changes a length moves the lattice",
                       "              kind: Drift\n"
                       "              length: 1.0\n"
                       "          - m1:\n"
-                      "              kind: Marker\n"
-                      "    - expand_lattice\n"
+                      "              kind: Marker\n",
+                      "main",
                       "    - set:\n"
                       "        parameter: d1>length\n"
-                      "        value: 3.5\n",
-                      "main");
+                      "        value: 3.5\n");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
     REQUIRE(joined(lat) == "");
@@ -628,7 +621,7 @@ TEST_CASE("a post-expansion set that changes a length moves the lattice",
 TEST_CASE("controllers stay authoritative over a post-expansion set",
           "[expr][lattices][set][controller]") {
     // s:lattice.expand applies the ABSOLUTE controllers after the
-    // post-expansion list, so a controller-driven parameter keeps the
+    // post_expansion list, so a controller-driven parameter keeps the
     // controller's value even when a later set writes it.
     const std::string doc =
         facility_file("    - ps1:\n"
@@ -644,12 +637,11 @@ TEST_CASE("controllers stay authoritative over a post-expansion set",
                       "              kind: Quadrupole\n"
                       "              length: 0.5\n"
                       "              MagneticMultipoleP:\n"
-                      "                Kn1L: 0.1\n"
-                      "    - expand_lattice\n"
+                      "                Kn1L: 0.1\n",
+                      "main",
                       "    - set:\n"
                       "        parameter: q1>MagneticMultipoleP.Kn1L\n"
-                      "        value: 0.2\n",
-                      "main");
+                      "        value: 0.2\n");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
     REQUIRE(joined(lat) == "");

@@ -123,7 +123,7 @@ TEST_CASE("load merges whole files subnode by subnode", "[load]") {
             std::vector<std::string>{"layout note", "settings note",
                                      "joiner note"});
     REQUIRE(facility_names(c.lat.combined) ==
-            std::vector<std::string>{"main", "lat1", "use", "set"});
+            std::vector<std::string>{"Q1a", "main", "lat1", "use", "set"});
 
     // The directive itself does not survive into the combined tree.
     REQUIRE(get_child_by_key(c.lat.combined, pals_of(c.lat.combined), "load") ==

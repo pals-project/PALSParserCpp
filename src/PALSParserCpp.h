@@ -263,15 +263,15 @@ extern "C" {
  * their pass number — how many times a particle will have travelled through
  * that physical element by that point. Every dependent parameter has been
  * computed: each element carries its `element_index` — its position, counting
- * from one, in the branch line that holds it — its `ReferenceP`, `FloorP` and
- * `s_position`,
+ * from one, in the branch line that holds it — its `ReferenceP`, `FloorP`,
+ * `ShiftedFloorP` and `s_position`,
  * the derived members of every parameter family it uses (`Kn1L` alongside
  * `Kn1`, `voltage` alongside `gradient`, ...), the non-zero defaults of the
  * groups it carries, and each branch is capped with a `branch_end` Placeholder
  * holding its final reference and floor.
  *           - `expanded`: the same lattice with all of that removed. Which
  * parameters it keeps is decided by what the author wrote: one is held when it
- * was present before bookkeeping ran or was written by a post-`expand_lattice`
+ * was present before bookkeeping ran or was written by a `post_expansion`
  * `set`, and everything else the bookkeeper computed is pruned, along with any
  * group left empty and the `branch_end` elements. The *values* it holds are the
  * finished ones — this is `full_expanded` with nodes removed, not an earlier
@@ -281,7 +281,9 @@ extern "C" {
  * without the derived values.
  *           - `adjunct`: the rest of the document, keeping its PALS/facility
  * scaffolding: element and beamline definitions, `use` statements, constants,
- * and any Lattice that was not the one expanded. Definitions substituted into
+ * `post_expansion`, `adjustments`, the girders (with the `FloorP` and
+ * `ShiftedFloorP` computed for them), and any Lattice that was not the one
+ * expanded. Definitions substituted into
  * the lattice are copies, so they appear in both trees.
  *         All five handles must be freed individually with delete_tree().
  *
@@ -406,44 +408,46 @@ YAML_API void free_correspondence_map(struct correspondence_map map);
  * Finds every named construct matched by a PALS name-matching string.
  * @ingroup namematch
  *
- * The string follows the "Name Matching" / "Element Name Matching" syntax:
+ * The string follows the "Name Matching" syntax of the standard (names.md):
  *
- *   [{lattice}>>>][{branch}>>][{kind}::]{name}[>{group}.{sub}. ... .{param}]
+ *   {element-set}[>{group}.{sub}. ... .{param}]
  *
- * `{lattice}`, `{branch}`, and `{name}` are PCRE2 patterns matched against the
- * whole name (anchored at both ends); `{kind}` is matched exactly; the
- * parameter path after the single `>` is matched exactly, key by key. An
- * omitted or empty pattern component matches any name at that level. `{branch}`
- * matches an element if any enclosing BeamLine/Branch name matches, so elements
- * in sub-lines are included.
+ * where `{element-set}` is a `,` union of `&` intersections of `:` ranges of
+ * element names, and an element name is
  *
- * A line entry written as a bare reference (`- q1`) is matched only through a
- * `{branch}` qualifier. It holds no parameters of its own until something writes
- * one — `- q1: {length: 0.6}` is the same entry with room for them — so
- * unqualified, `q1` is the definition it points at rather than the reference.
+ *   [{lattice}>>>][{branch}>>][{kind}::]{name}[#{N}]
  *
- * `facility` is reserved as a `{branch}` name: it selects the element
- * definitions held directly by the `facility` list rather than the elements of
- * any branch, and being a keyword it is matched literally, not as a pattern.
- * Definitions written inline inside a beamline are not reached by it — they
- * belong to that beamline — and neither is anything when a `{lattice}`
- * qualifier is also given, since a definition belongs to no lattice.
+ * The operators bind, tightest first: `>>>`, `>>`, `::`, `#`, `:`, `&`, `,`,
+ * `>`. `{lattice}`, `{branch}`, and `{name}` are PCRE2 patterns matched against
+ * the whole name (anchored at both ends); characters inside a `(...)`, `[...]`
+ * or `{...}` group belong to the pattern, so `Q\d{2,3}` is one name. A `{name}`
+ * of digits only is the 1-based index of an element in its line. `{kind}` is an
+ * element kind, `Controller`, or one of the MetaP components `alias`, `ID`,
+ * `label` and `description` (`alias::black` matches the elements whose
+ * `MetaP.alias` is `black`). `#{N}` keeps the N-th match. A range `{a}:{b}`
+ * runs from each `a` to the next `b` in the same line, wrapping round the end
+ * of the line. The parameter path after the single `>` is matched exactly, key
+ * by key, and applies to every element of the set.
+ *
+ * In an expanded lattice (`expanded`, `full_expanded`) a name reaches the
+ * elements of the lattice. In a tree that holds a `PALS` node (`original`,
+ * `combined`, `adjunct`) an unqualified name reaches the element definitions
+ * standing under `facility` or `post_expansion`, and only a `{branch}>>`
+ * qualified name reaches the elements written in a beamline's `line` --
+ * including a bare reference (`- q1`), and the elements of the sub-lines the
+ * beamline uses.
  *
  * The node returned for each match is whatever the string resolves to: the
- * element node (no parameter path), the parameter-group or parameter node (with
- * a path), or, for a bare name — no lattice/branch/kind qualifier and no
- * parameter path — additionally each matching constant and variable defined
- * directly under the `PALS` or `facility` node (both the full
- * `kind: constant`/`kind: variable` and the compact `constants:`/`variables:`
- * forms).
+ * element node (no parameter path), or the parameter-group or parameter node
+ * (with a path). Controllers are matched by `Controller::{name}`, and a
+ * controller variable by `{controller}>{variable}`. A bare name -- one element
+ * name with no qualifier of any sort and no parameter path -- additionally
+ * matches each constant and variable of that name defined directly under the
+ * `PALS`, `facility` or `post_expansion` node (both the full `kind: constant`/
+ * `kind: variable` and the compact `constants:`/`variables:` forms), and each
+ * controller of that name.
  *
- * Not yet implemented from Element Name Matching: `#N` instance selection,
- * `{e1}:{e2}` ranges, `,` unions, and `&` intersections.
- *
- * Because beamlines and elements are only fully realised after expansion, this
- * is normally run on the `full_expanded` tree of a parse_and_expand_PALS() result,
- * but it works on any tree. Results are de-duplicated and returned in
- * document order.
+ * Results are de-duplicated and returned in match order.
  *
  * @param tree         Handle to the tree to search.
  * @param match_string Null-terminated name-matching string.

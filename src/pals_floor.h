@@ -103,6 +103,15 @@ FloorAngles floor_angles_from_quat(const Quat& q);
 //   r1 = r0 + W0*L,   W1 = W0*S     (Eq. wws).
 FloorState floor_propagate(const FloorState& s0, const Vec3& L, const Quat& S);
 
+// The placement `b`, given relative to the frame `a`, expressed in the frame `a`
+// itself is given in: r = r_a + W_a*r_b, W = W_a*W_b. Read as a rigid motion,
+// floor_compose(m, f) carries the placement f by the motion m.
+FloorState floor_compose(const FloorState& a, const FloorState& b);
+
+// The inverse of a placement: floor_compose(a, floor_inverse(a)) is the
+// identity.
+FloorState floor_inverse(const FloorState& a);
+
 // --- (L, S) builders for the three reference-curve geometries ---
 
 // Straight element (Drift, Quadrupole, ...) of the given length: L = (0,0,L),

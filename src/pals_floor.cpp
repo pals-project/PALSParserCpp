@@ -112,6 +112,19 @@ FloorState floor_propagate(const FloorState& s0, const Vec3& L, const Quat& S) {
     return s1;
 }
 
+FloorState floor_compose(const FloorState& a, const FloorState& b) {
+    return floor_propagate(a, b.r, b.q);
+}
+
+FloorState floor_inverse(const FloorState& a) {
+    Quat qi{a.q.w, -a.q.x, -a.q.y, -a.q.z};
+    Vec3 r = quat_rotate(qi, a.r);
+    FloorState out;
+    out.r = Vec3{-r.x, -r.y, -r.z};
+    out.q = quat_normalize(qi);
+    return out;
+}
+
 void straight_LS(double length, Vec3& L, Quat& S) {
     L = Vec3{0.0, 0.0, length};
     S = Quat{1.0, 0.0, 0.0, 0.0};

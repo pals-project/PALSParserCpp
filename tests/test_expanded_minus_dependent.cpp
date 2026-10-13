@@ -9,7 +9,7 @@
 // `expanded` is the same lattice pruned back to the author's inputs. These tests
 // pin the boundary between the two — which is decided by what the lattice held
 // at the moment before run_element_bookkeeper first ran, plus whatever a
-// post-`expand_lattice` `set` wrote afterwards.
+// `post_expansion` `set` wrote afterwards.
 
 namespace {
 
@@ -46,8 +46,8 @@ const char* SPLIT_YAML =
     "                    kind: Marker\n"
     "    - use: lat1\n";
 
-// The same lattice with an `expand_lattice` statement and a `set` after it, so
-// the set lands on the expanded copy — after the first bookkeeper pass has
+// The same lattice with a `set` under `post_expansion`, so the set lands on the
+// expanded copy — after the first bookkeeper pass has
 // already run. `Kn2L` is written; `Kn2` is what the second pass derives from it.
 const char* POST_SET_YAML =
     "PALS:\n"
@@ -68,11 +68,11 @@ const char* POST_SET_YAML =
     "                    length: 0.5\n"
     "                    MagneticMultipoleP:\n"
     "                      Kn1: 0.3\n"
-    "    - expand_lattice\n"
+    "    - use: lat1\n"
+    "  post_expansion:\n"
     "    - set:\n"
     "        parameter: \"q1>MagneticMultipoleP.Kn2L\"\n"
-    "        value: 0.75\n"
-    "    - use: lat1\n";
+    "        value: 0.75\n";
 
 // A fork whose destination resolves, so link_fork_connections has somewhere to
 // write: it names the destination on the Fork (`forked_to`) and hangs a
@@ -110,8 +110,8 @@ const char* FORK_YAML =
     "                      new_branch: this_dump\n"
     "    - use: lat1\n";
 
-// A controller driving a parameter the author already wrote, plus an
-// `expand_lattice` and a `set` after it. Between them these are every way a
+// A controller driving a parameter the author already wrote, plus a
+// `post_expansion` `set`. Between them these are every way a
 // value can be rewritten after it was first written: `Kn1L` is authored as 0.33,
 // driven to 0.8 by the ABSOLUTE controller, and `length` is then overwritten by
 // the post-expansion set.
@@ -139,11 +139,11 @@ const char* REWRITTEN_YAML =
     "                    length: 0.5\n"
     "                    MagneticMultipoleP:\n"
     "                      Kn1L: 0.33\n"
-    "    - expand_lattice\n"
+    "    - use: lat1\n"
+    "  post_expansion:\n"
     "    - set:\n"
     "        parameter: \"Qa1>length\"\n"
-    "        value: 0.75\n"
-    "    - use: lat1\n";
+    "        value: 0.75\n";
 
 void free_all(struct lattices& lat) {
     free_lattice_problems(lat.problems);
@@ -316,7 +316,7 @@ TEST_CASE("expanded drops the branch_end the bookkeeper appends", "[expanded]") 
     free_all(lat);
 }
 
-TEST_CASE("expanded keeps what a post-expand_lattice set wrote", "[expanded]") {
+TEST_CASE("expanded keeps what a post_expansion set wrote", "[expanded]") {
     struct lattices lat = expand_PALS_string(POST_SET_YAML, nullptr);
 
     // The set runs after the first bookkeeper pass, so it lands after the point
@@ -419,7 +419,7 @@ TEST_CASE("expanded carries the value a controller drove, not the authored one",
     REQUIRE(close(
         num_val(lat.expanded, get_child_by_key(lat.expanded, mp, "Kn1L")), 0.8));
 
-    // Likewise the post-expand_lattice set overwrites the authored length.
+    // Likewise the post_expansion set overwrites the authored length.
     REQUIRE(close(
         num_val(lat.expanded,
                 get_child_by_key(lat.expanded, q, "length")),

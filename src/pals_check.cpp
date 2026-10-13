@@ -13,8 +13,8 @@ namespace {
 // Every element kind PALS defines (lattice-element-kinds.md, s:ele.kinds),
 // followed by the kinds that name something other than a lattice element: the
 // two structural kinds (beamlines.md, lattice-construction.md) and the three
-// definition kinds -- `constant` (fundamentals.md, s:constants), and `variable`
-// and `Controller` (pals#240, pals#237).
+// definition kinds -- `constant`, `variable` and `Controller`
+// (parameter-values-and-controllers.md).
 const std::set<std::string>& known_kinds() {
     static const std::set<std::string> k = {
         "ACKicker",   "BeamBeam",  "BeginningEle",    "Bend",
@@ -32,16 +32,16 @@ const std::set<std::string>& known_kinds() {
 }
 
 // Every parameter group PALS defines (lattice-element-parameter-groups.md, and
-// one file each under source/parameters). ForkFromP is pals#272.
+// one file each under source/parameters).
 const std::set<std::string>& known_groups() {
     static const std::set<std::string> g = {
-        "ACKickerP",         "ApertureP",   "BeamBeamP",   "BendP",
-        "BodyShiftP",        "ConverterP",  "ElectricMultipoleP",
-        "FloorP",            "FloorShiftP", "FoilP",       "ForkFromP",
-        "ForkP",             "GirderP",     "MagneticMultipoleP",
-        "MetaP",             "ParticleP",   "PatchP",      "ReferenceChangeP",
-        "ReferenceP",        "RFP",         "SolenoidP",   "TaylorP",
-        "TrackingP",         "TwissP"};
+        "ACKickerP",         "ApertureP",      "BeamBeamP",   "BendP",
+        "BodyShiftP",        "ConverterP",     "CoordinateSetP",
+        "ElectricMultipoleP", "FloorP",        "FoilP",       "ForkFromP",
+        "ForkP",             "GirderP",        "MagneticMultipoleP",
+        "MetaP",             "ParticleP",      "PatchP",      "ReferenceChangeP",
+        "ReferenceP",        "RFP",            "ShiftedFloorP", "SolenoidP",
+        "TaylorP",           "TrackingP",      "TwissP"};
     return g;
 }
 
@@ -66,14 +66,15 @@ const std::map<std::string, std::set<std::string>>& group_params() {
         {"BodyShiftP",
          {"x_offset", "y_offset", "z_offset", "x_rot", "y_rot", "z_rot"}},
         {"ConverterP", {"species_out", "E_tot_ref_out"}},
+        {"CoordinateSetP",
+         {"origin_ele", "origin_ele_ref_pt", "x_offset", "y_offset", "z_offset",
+          "x_rot", "y_rot", "z_rot"}},
         {"FloorP", {"x", "y", "z", "theta", "phi", "psi", "user_set"}},
-        {"FloorShiftP",
-         {"x_offset", "y_offset", "z_offset", "t_offset", "x_rot", "y_rot",
-          "z_rot"}},
         {"FoilP", {"dE_ref"}},
         {"ForkP",
-         {"to_line", "destination_element", "direction", "new_branch",
+         {"to_line", "destination_element", "new_branch",
           "propagate_reference", "forked_to"}},
+        {"GirderP", {"elements"}},
         {"ParticleP",
          {"x",           "px",          "y",          "py",
           "z",           "pz",          "spin_x",     "spin_y",
@@ -94,6 +95,7 @@ const std::map<std::string, std::set<std::string>>& group_params() {
          {"frequency", "harmon", "voltage", "gradient", "phase",
           "multipass_phase", "cavity_type", "num_cells", "zero_phase",
           "L_active", "dE_ref"}},
+        {"ShiftedFloorP", {"x", "y", "z", "theta", "phi", "psi"}},
         {"SolenoidP", {"Ksol", "Bsol"}},
         {"TaylorP",
          {"x_out", "px_out", "y_out", "py_out", "z_out", "pz_out", "S_q1_out",
@@ -146,7 +148,8 @@ enum_values() {
                 "CHORD", "ENTRANCE_COORDS", "EXIT_COORDS"}},
               {"ref_geometry",
                {"ARC", "CHORD", "ENTRANCE_COORDS", "EXIT_COORDS"}}}},
-            {"ForkP", {{"direction", {"FORWARDS", "BACKWARDS"}}}},
+            {"CoordinateSetP",
+             {{"origin_ele_ref_pt", {"ENTRANCE_END", "CENTER", "EXIT_END"}}}},
             {"PatchP", {{"ref_coords", {"ENTRANCE_END", "EXIT_END"}}}},
             {"RFP",
              {{"cavity_type", {"STANDING_WAVE", "TRAVELING_WAVE"}},
@@ -166,70 +169,64 @@ const std::set<std::string>* enum_domain(const std::string& group,
 
 // The parameter groups each element kind may carry, from the "Element parameter
 // groups associated with this element kind are" list in its section of
-// lattice-element-kinds.md.
+// lattice-element-kinds.md, with the group collections of s:super.groups
+// written out.
 //
 // A kind absent from this table is one nothing is documented for, and so is not
-// checked: `Feedback`, `Fiducial` and `Girder` are still "Under Construction",
-// and `BeamLine`, `Lattice`, `Controller`, `constant` and `variable` are not
-// lattice elements at all. `Placeholder` is present with an empty list on
-// purpose -- its section says it has no associated parameter groups.
+// checked: `Feedback` is still "Under Construction", and `BeamLine`, `Lattice`,
+// `Controller`, `constant` and `variable` are not lattice elements at all.
+// `Placeholder` is present with an empty list on purpose -- its section says it
+// has no associated parameter groups.
 const std::map<std::string, std::set<std::string>>& kind_groups() {
-    // Carried by every physical element.
-    static const std::set<std::string> common = {
-        "ApertureP", "BodyShiftP", "FloorP", "MetaP", "ReferenceP",
-        "TrackingP"};
-    // The above plus multipoles, which is the list most magnets have.
-    static const std::set<std::string> magnet = [] {
-        std::set<std::string> s = common;
-        s.insert({"ElectricMultipoleP", "MagneticMultipoleP"});
+    auto join = [](std::initializer_list<std::set<std::string>> parts,
+                   std::initializer_list<const char*> extra = {}) {
+        std::set<std::string> s;
+        for (const auto& p : parts) s.insert(p.begin(), p.end());
+        for (const char* e : extra) s.insert(e);
         return s;
-    }();
-    auto with = [](std::set<std::string> base,
-                   std::initializer_list<const char*> extra) {
-        for (const char* e : extra) base.insert(e);
-        return base;
     };
+    // The collections of s:super.groups.
+    static const std::set<std::string> ftm = {"FloorP", "MetaP",
+                                              "ShiftedFloorP", "TrackingP"};
+    static const std::set<std::string> body = {"ApertureP", "BodyShiftP"};
+    static const std::set<std::string> multipole = {"ElectricMultipoleP",
+                                                    "MagneticMultipoleP"};
+    static const std::set<std::string> output = {"ParticleP", "ReferenceP",
+                                                 "TwissP"};
+    static const std::set<std::string> common = join({ftm, body, output});
+    static const std::set<std::string> magnet = join({common, multipole});
 
     static const std::map<std::string, std::set<std::string>> g = {
-        {"ACKicker", with(common, {"ACKickerP"})},
-        {"BeamBeam", with(common, {"BeamBeamP"})},
-        // TwissP and ParticleP are not in the BeginningEle list in
-        // lattice-element-kinds.md yet; they are being added there. Both state
-        // the initial conditions of a branch -- twiss.md says as much -- and
-        // the beginning element is where a branch states them, which is why no
-        // other kind's list mentions either group. ForkFromP is the reverse
-        // fork link (pals#272), which the parser writes onto the three kinds a
-        // Fork may point at.
-        {"BeginningEle", with(common, {"TwissP", "ParticleP", "ForkFromP"})},
-        {"Bend", with(magnet, {"BendP"})},
-        {"Converter", with(magnet, {"ConverterP"})},
+        {"ACKicker", join({common}, {"ACKickerP"})},
+        {"BeamBeam", join({common}, {"BeamBeamP"})},
+        {"BeginningEle", join({common}, {"ForkFromP"})},
+        {"Bend", join({magnet}, {"BendP"})},
+        {"Converter", join({magnet}, {"ConverterP"})},
         {"CrabCavity", magnet},
         {"Drift", common},
         {"EGun", magnet},
-        {"FloorShift", {"FloorShiftP", "MetaP", "ReferenceP"}},
-        {"Foil", with(common, {"FoilP"})},
-        {"Fork", with(common, {"ForkP", "ForkFromP"})},
+        {"Fiducial", join({common}, {"CoordinateSetP"})},
+        {"FloorShift", join({common}, {"CoordinateSetP"})},
+        {"Foil", join({common}, {"FoilP"})},
+        {"Fork", join({common}, {"ForkP", "ForkFromP"})},
+        {"Girder",
+         {"CoordinateSetP", "BodyShiftP", "FloorP", "GirderP", "MetaP",
+          "ShiftedFloorP"}},
         {"Instrument", magnet},
         {"Kicker", magnet},
-        // ApertureP is not in the Marker list in lattice-element-kinds.md yet;
-        // it is being added there. A Marker often stands in for a beam position
-        // monitor, which has an aperture like any other physical element.
-        {"Marker",
-         {"ApertureP", "BodyShiftP", "FloorP", "MetaP", "ReferenceP",
-          "ForkFromP"}},
+        {"Marker", join({common}, {"ForkFromP"})},
         {"Mask", magnet},
         {"Match", common},
         {"Multipole", magnet},
         {"Octupole", magnet},
-        {"Patch", with(common, {"PatchP"})},
+        {"Patch", join({ftm, output}, {"ApertureP", "PatchP"})},
         {"Placeholder", {}},
         {"Quadrupole", magnet},
-        {"ReferenceChange",
-         {"FloorP", "MetaP", "ReferenceChangeP", "ReferenceP", "TrackingP"}},
-        {"RFCavity", with(magnet, {"RFP", "SolenoidP"})},
+        {"ReferenceChange", join({ftm, output}, {"ReferenceChangeP"})},
+        {"RFCavity", join({magnet}, {"RFP", "SolenoidP"})},
         {"Sextupole", magnet},
-        {"Solenoid", with(magnet, {"SolenoidP"})},
-        {"Taylor", with(common, {"TaylorP"})},
+        {"Solenoid", join({magnet}, {"SolenoidP"})},
+        {"Taylor", join({common}, {"TaylorP"})},
         {"UnionEle", common},
         {"Wiggler", magnet}};
     return g;
@@ -239,21 +236,29 @@ const std::map<std::string, std::set<std::string>>& kind_groups() {
 // entries are left alone:
 //  - MetaP may hold arbitrary metadata beyond its six components (meta.md).
 //  - TrackingP is program-specific by design (tracking.md).
-//  - ACKickerP and GirderP are "In Construction" -- nothing to check against.
-//  - ForkFromP is built by the parser, keyed `{branch}>>{element}` (pals#272).
+//  - ACKickerP is "In Construction" -- nothing to check against.
+//  - ForkFromP is built by the parser, keyed `{branch}>>{element}`.
 const std::set<std::string>& open_groups() {
     static const std::set<std::string> g = {"MetaP", "TrackingP", "ACKickerP",
-                                            "GirderP", "ForkFromP"};
+                                            "ForkFromP"};
     return g;
 }
 
-// The keys the `PALS` root node may carry: the six of fundamentals.md
-// (s:palsroot), `phase_space_coordinates` (coordinates.md), and the two ways a
-// file names another, `include` and `load` (fundamentals.md, s:include).
+// The keys the `PALS` root node may carry (top-level.md, s:palsroot).
 const std::set<std::string>& known_pals_keys() {
     static const std::set<std::string> k = {
-        "authors", "extension_labels",        "facility",  "include", "load",
-        "notes",   "phase_space_coordinates", "reminders", "version"};
+        "adjustments", "authors",        "extension_labels",
+        "facility",    "girders",        "include",
+        "load",        "notes",          "phase_space_coordinates",
+        "post_expansion", "reminders",   "version"};
+    return k;
+}
+
+// The settings of the root `phase_space_coordinates` enum (coordinates.md).
+const std::set<std::string>& phase_space_settings() {
+    static const std::set<std::string> k = {
+        "ANGLE_AND_ENERGY", "ANGLE_AND_MOMENTUM", "KINETIC_AND_ENERGY",
+        "KINETIC_AND_MOMENTUM"};
     return k;
 }
 
@@ -307,14 +312,14 @@ bool is_multipole_param(const std::string& group, const std::string& key) {
 }
 
 // The parameters an element of `kind` may carry outside any parameter group:
-// the six that fit no group (lattice-element-parameters.md, s:non.params),
+// the ones that fit no group (lattice-element-parameters.md, s:non.params),
 // `inherit` and the line-item modifiers usable on an element defined in place,
 // and then whatever the kind itself is built from.
 const std::set<std::string>& element_params(const std::string& kind) {
     static const std::set<std::string> base = {
-        "field_master", "is_on",  "kind",      "length",
-        "name",         "s_position", "inherit", "direction",
-        "multipass_index", "element_index"};
+        "is_on",  "kind",      "length",          "name",
+        "s_position", "inherit", "direction",     "multipass_index",
+        "element_index"};
     static const std::set<std::string> beamline = [] {
         std::set<std::string> s = base;
         s.insert({"line", "multipass", "zero_point", "periodic", "repeat"});
@@ -508,7 +513,7 @@ void report(pals::ProblemList& problems, const ryml::Tree& t,
 // Does nothing for a parameter that is not an enum.
 void check_enum_value(const ryml::Tree& t, size_t owner, size_t node,
                       const std::string& group, const std::string& param,
-                      pals::ProblemList& problems) {
+                      const Extensions& ext, pals::ProblemList& problems) {
     const std::set<std::string>* domain = enum_domain(group, param);
     if (!domain) return;
     // Only a plain scalar can be checked. A null value means "unset", which is
@@ -516,7 +521,8 @@ void check_enum_value(const ryml::Tree& t, size_t owner, size_t node,
     // the author naming a word that does not exist.
     if (!t.has_val(node) || t.val_is_null(node)) return;
     std::string v(t.val(node).str, t.val(node).len);
-    if (v.empty() || domain->count(v) != 0) return;
+    // A value registered under `extension_labels` is an extension enum value.
+    if (v.empty() || domain->count(v) != 0 || ext.marks(v)) return;
 
     std::string msg = where(t, owner, group) + "'" + param +
                       "' is set to '" + v + "', which is not one of its values";
@@ -560,7 +566,7 @@ void check_group(const ryml::Tree& t, size_t owner, size_t group_node,
             if (ext.marks(k) || is_group_meta_key(k)) continue;
             if (multipole ? is_multipole_param(group, k)
                           : entry->second.count(k) != 0) {
-                check_enum_value(t, owner, c, group, k, problems);
+                check_enum_value(t, owner, c, group, k, ext, problems);
                 continue;
             }
             // A multipole name is generated, so there is no table to suggest
@@ -660,37 +666,239 @@ void walk(const ryml::Tree& t, size_t node, const Extensions& ext,
     }
 }
 
-// Collect every construct wrongly named `facility`. The word is reserved: in a
-// name-matching string `facility>>q1` selects the `q1` held by the facility node
-// itself rather than any branch's (lattice-elements.md), so an element, BeamLine
-// or Lattice answering to `facility` would make the qualifier ambiguous.
-//
-// The three places a construct is given a name are an entry of the `facility`
-// list, an entry of a `line`, and an entry of `branches` -- each a sequence of
-// anonymous maps wrapping one keyed definition. Looking for the shape rather
-// than for a `kind` is what also catches a branch that only `inherit`s a
-// beamline, which carries no kind of its own. Node ids are collected in a set so
-// a construct reachable two ways is still reported once.
-void collect_reserved_names(const ryml::Tree& t, size_t node,
-                            std::set<size_t>& bad) {
-    if (node == ryml::NONE) return;
+// True when `name` follows the name syntax of names.md (s:names): a letter or
+// underscore, then letters, digits and underscores only.
+bool valid_name(const std::string& name) {
+    if (name.empty()) return false;
+    auto letter = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    };
+    if (!letter(name[0])) return false;
+    for (char c : name)
+        if (!letter(c) && !(c >= '0' && c <= '9')) return false;
+    return true;
+}
 
-    if (t.is_seq(node) && t.has_key(node)) {
+// The words notation.md (s:reserved) keeps out of names: they stand for the
+// parameter being set and its element in a `set` value expression.
+bool reserved_name(const std::string& name) {
+    return name == "SELF" || name == "PARAMETER";
+}
+
+// Every name a construct is given, as (node, name). The places a name is given
+// are an entry of the `facility`, `post_expansion`, `line` or `branches` lists
+// (each a sequence of anonymous maps wrapping one keyed definition), a key of
+// the `girders` dict, an entry of a `constants`/`variables` list, and a
+// controller's `variables`. Looking for the shape rather than for a `kind` is
+// what also catches a branch that only `inherit`s a beamline, which carries no
+// kind of its own. A bare `- q1` in a line refers to a name rather than giving
+// one, and is left out.
+void collect_names(const ryml::Tree& t, size_t node,
+                   std::vector<std::pair<size_t, std::string>>& out) {
+    if (node == ryml::NONE) return;
+    auto take = [&](size_t n) {
+        if (n != ryml::NONE && t.has_key(n))
+            out.emplace_back(n, std::string(t.key(n).str, t.key(n).len));
+    };
+
+    if (t.has_key(node)) {
         std::string k(t.key(node).str, t.key(node).len);
-        if (k == "facility" || k == "line" || k == "branches") {
+        if (t.is_seq(node) && (k == "facility" || k == "post_expansion" ||
+                               k == "line" || k == "branches")) {
             for (size_t e = t.first_child(node); e != ryml::NONE;
                  e = t.next_sibling(e)) {
                 if (!t.is_map(e)) continue;
                 size_t def = t.first_child(e);
                 if (def == ryml::NONE || !t.has_key(def)) continue;
-                if (std::string(t.key(def).str, t.key(def).len) == "facility")
-                    bad.insert(def);
+                // `include`, `set`, `sets`, `constants`, `variables` and `use`
+                // are directives, not names.
+                std::string dk(t.key(def).str, t.key(def).len);
+                if (dk == "include" || dk == "set" || dk == "sets" ||
+                    dk == "constants" || dk == "variables" || dk == "use")
+                    continue;
+                take(def);
+            }
+        } else if (t.is_map(node) && k == "girders") {
+            for (size_t c = t.first_child(node); c != ryml::NONE;
+                 c = t.next_sibling(c))
+                take(c);
+        } else if (k == "constants" || k == "variables") {
+            for (size_t e = t.first_child(node); e != ryml::NONE;
+                 e = t.next_sibling(e))
+                take(t.has_key(e) ? e : t.first_child(e));
+        }
+    }
+    for (size_t c = t.first_child(node); c != ryml::NONE; c = t.next_sibling(c))
+        collect_names(t, c, out);
+}
+
+// Report the names that break the name syntax, and the uses of a reserved word
+// as a name. One problem per name however often it is used: the definition and
+// the references to it are the same mistake.
+void check_names(const ryml::Tree& t, pals::ProblemList& problems) {
+    std::vector<std::pair<size_t, std::string>> names;
+    collect_names(t, t.root_id(), names);
+    std::set<std::string> said;
+    for (const auto& n : names) {
+        if (!said.insert(n.second).second) continue;
+        if (reserved_name(n.second))
+            add(problems,
+                "'" + n.second + "' is a reserved word and cannot be used as "
+                "a name",
+                n.second);
+        else if (!valid_name(n.second))
+            add(problems,
+                "'" + n.second + "' is not a valid name: a name starts with a "
+                "letter or underscore and holds only letters, digits and "
+                "underscores",
+                n.second);
+    }
+}
+
+// Check where `Girder` elements are and what is under `PALS: girders`.
+// Girders live outside the lattice tree, in the `girders` dict and nowhere
+// else, and that dict holds nothing but girders (lattice-element-kinds.md,
+// s:girder).
+void check_girders(const ryml::Tree& t, size_t pals,
+                   pals::ProblemList& problems) {
+    size_t girders = t.find_child(pals, ryml::to_csubstr("girders"));
+    std::set<size_t> in_dict;
+    if (girders != ryml::NONE) {
+        if (!t.is_map(girders)) {
+            add(problems, "PALS node: 'girders' must be a dict of Girder "
+                          "elements keyed by name",
+                "girders");
+        } else {
+            for (size_t c = t.first_child(girders); c != ryml::NONE;
+                 c = t.next_sibling(c)) {
+                in_dict.insert(c);
+                std::string name = t.has_key(c)
+                                       ? std::string(t.key(c).str, t.key(c).len)
+                                       : "<girder>";
+                if (!t.is_map(c) || child_val_str(t, c, "kind") != "Girder")
+                    add(problems,
+                        "girders: '" + name + "' is not a Girder element", name);
             }
         }
     }
 
-    for (size_t c = t.first_child(node); c != ryml::NONE; c = t.next_sibling(c))
-        collect_reserved_names(t, c, bad);
+    // A Girder anywhere else.
+    std::vector<size_t> stack{t.root_id()};
+    while (!stack.empty()) {
+        size_t n = stack.back();
+        stack.pop_back();
+        if (t.is_map(n) && !in_dict.count(n) &&
+            child_val_str(t, n, "kind") == "Girder") {
+            std::string name = t.has_key(n)
+                                   ? std::string(t.key(n).str, t.key(n).len)
+                                   : "<girder>";
+            add(problems,
+                "Girder '" + name + "' must be defined under 'PALS: girders'",
+                name);
+            continue;
+        }
+        for (size_t c = t.first_child(n); c != ryml::NONE; c = t.next_sibling(c))
+            stack.push_back(c);
+    }
+}
+
+// Check the shape of `PALS: adjustments` (parameter-values-and-controllers.md,
+// s:adjust): a list of `optimize` blocks, each a list of `vary` and `target`
+// entries. A `vary` names the parameters to vary and may give a weight; a
+// `target` names a datum, the value to bring it to, and may give a weight.
+void check_adjustments(const ryml::Tree& t, size_t pals,
+                       pals::ProblemList& problems) {
+    size_t adj = t.find_child(pals, ryml::to_csubstr("adjustments"));
+    if (adj == ryml::NONE) return;
+    if (!t.is_seq(adj)) {
+        add(problems, "adjustments: must be a list of 'optimize' blocks",
+            "adjustments");
+        return;
+    }
+    for (size_t e = t.first_child(adj); e != ryml::NONE; e = t.next_sibling(e)) {
+        size_t opt = t.is_map(e) ? t.first_child(e) : ryml::NONE;
+        if (opt == ryml::NONE || !t.has_key(opt) ||
+            t.key(opt) != ryml::to_csubstr("optimize") || !t.is_seq(opt)) {
+            add(problems,
+                "adjustments: every entry must be an 'optimize' list of "
+                "'vary' and 'target' entries",
+                "adjustments");
+            continue;
+        }
+        bool has_vary = false, has_target = false;
+        for (size_t v = t.first_child(opt); v != ryml::NONE;
+             v = t.next_sibling(v)) {
+            size_t item = t.is_map(v) ? t.first_child(v) : ryml::NONE;
+            std::string k = (item != ryml::NONE && t.has_key(item))
+                                ? std::string(t.key(item).str, t.key(item).len)
+                                : "";
+            if (k != "vary" && k != "target") {
+                add(problems,
+                    "adjustments: unknown optimize entry '" + k +
+                        "'; expected 'vary' or 'target'",
+                    "adjustments");
+                continue;
+            }
+            (k == "vary" ? has_vary : has_target) = true;
+            if (!t.is_map(item)) {
+                add(problems, "adjustments: '" + k + "' must be a map",
+                    "adjustments");
+                continue;
+            }
+            static const std::set<std::string> vary_keys = {"parameter",
+                                                            "weight"};
+            static const std::set<std::string> target_keys = {
+                "parameter", "value", "weight"};
+            const std::set<std::string>& known =
+                k == "vary" ? vary_keys : target_keys;
+            for (size_t c = t.first_child(item); c != ryml::NONE;
+                 c = t.next_sibling(c)) {
+                std::string ck(t.key(c).str, t.key(c).len);
+                if (!known.count(ck))
+                    add(problems,
+                        "adjustments: unknown '" + k + "' component '" + ck +
+                            "'",
+                        "adjustments");
+            }
+            if (child_val_str(t, item, "parameter").empty())
+                add(problems, "adjustments: '" + k + "' has no 'parameter'",
+                    "adjustments");
+            if (k == "target" && child_val_str(t, item, "value").empty())
+                add(problems, "adjustments: 'target' has no 'value'",
+                    "adjustments");
+        }
+        if (!has_vary || !has_target)
+            add(problems,
+                "adjustments: an 'optimize' block needs at least one 'vary' "
+                "and one 'target'",
+                "adjustments");
+    }
+}
+
+// Check what `PALS: post_expansion` holds: the node types `facility` may hold,
+// except a `Lattice` or a `use` (top-level.md, s:facility).
+void check_post_expansion(const ryml::Tree& t, size_t pals,
+                          pals::ProblemList& problems) {
+    size_t post = t.find_child(pals, ryml::to_csubstr("post_expansion"));
+    if (post == ryml::NONE) return;
+    if (!t.is_seq(post)) {
+        add(problems, "post_expansion: must be a list", "post_expansion");
+        return;
+    }
+    for (size_t e = t.first_child(post); e != ryml::NONE;
+         e = t.next_sibling(e)) {
+        size_t def = t.is_map(e) ? t.first_child(e) : ryml::NONE;
+        if (def == ryml::NONE || !t.has_key(def)) continue;
+        std::string k(t.key(def).str, t.key(def).len);
+        if (k == "use")
+            add(problems, "post_expansion: a 'use' is not allowed here",
+                "post_expansion");
+        else if (t.is_map(def) && child_val_str(t, def, "kind") == "Lattice")
+            add(problems,
+                "post_expansion: Lattice '" + k + "' is not allowed here; "
+                "lattices are defined under 'facility'",
+                k);
+    }
 }
 
 // Check the keys of the `PALS` root node itself. walk() judges what is below it
@@ -700,7 +908,7 @@ void collect_reserved_names(const ryml::Tree& t, size_t node,
 // extension was meant to cover, an element away from the actual mistake.
 //
 // Anything outside the `PALS` node is outside the standard and ignored
-// (fundamentals.md, s:palsroot), so only this node's own keys are checked.
+// (top-level.md, s:palsroot), so only this node's own keys are checked.
 void check_pals_root(const ryml::Tree& t, const Extensions& ext,
                      pals::ProblemList& problems) {
     size_t pals = t.find_child(t.root_id(), ryml::to_csubstr("PALS"));
@@ -710,7 +918,7 @@ void check_pals_root(const ryml::Tree& t, const Extensions& ext,
         if (!t.has_key(c)) continue;
         std::string k(t.key(c).str, t.key(c).len);
         if (ext.marks(k) || known_pals_keys().count(k)) continue;
-        // Nine names with nothing in common, so a cap of four edits still
+        // A dozen names with nothing in common, so a cap of four edits still
         // cannot match at random -- and it reaches the wrong word in a compound
         // name, which is the mistake this vocabulary invites.
         std::string msg = "PALS node: unknown key '" + k + "'";
@@ -718,6 +926,19 @@ void check_pals_root(const ryml::Tree& t, const Extensions& ext,
         if (!fix.empty()) msg += "; did you mean '" + fix + "'?";
         add(problems, msg);
     }
+
+    std::string psc = child_val_str(t, pals, "phase_space_coordinates");
+    if (!psc.empty() && !phase_space_settings().count(psc)) {
+        std::string msg = "PALS node: 'phase_space_coordinates' is set to '" +
+                          psc + "', which is not one of its values";
+        std::string fix = suggest(psc, phase_space_settings());
+        if (!fix.empty()) msg += "; did you mean '" + fix + "'?";
+        add(problems, msg, "phase_space_coordinates");
+    }
+
+    check_girders(t, pals, problems);
+    check_adjustments(t, pals, problems);
+    check_post_expansion(t, pals, problems);
 }
 
 }  // namespace
@@ -726,20 +947,5 @@ void check_pals_names(const ryml::Tree& t, pals::ProblemList& problems) {
     Extensions ext = collect_extensions(t);
     check_pals_root(t, ext, problems);
     walk(t, t.root_id(), ext, problems);
-
-    // One problem however many constructs are misnamed: the name, the reason
-    // and the fix are the same for all of them, so a message per occurrence
-    // would repeat itself word for word. The count is what varies, so that is
-    // what the message carries.
-    std::set<size_t> reserved;
-    collect_reserved_names(t, t.root_id(), reserved);
-    if (!reserved.empty()) {
-        std::string msg =
-            "'facility' is a reserved name and cannot name an element, "
-            "BeamLine or Lattice: 'facility>>' selects the definitions the "
-            "facility node itself holds";
-        if (reserved.size() > 1)
-            msg += " (" + std::to_string(reserved.size()) + " uses)";
-        add(problems, msg, "facility");
-    }
+    check_names(t, problems);
 }

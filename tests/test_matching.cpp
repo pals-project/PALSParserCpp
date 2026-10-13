@@ -4,6 +4,33 @@
 // NAME MATCHING
 // ============================================================
 
+namespace {
+
+// The element_index of each node in `m`, in order.
+std::vector<int> indices(YAMLTreeHandle t, const struct name_matches& m) {
+    std::vector<int> out;
+    for (size_t i = 0; i < m.count; ++i)
+        out.push_back(static_cast<int>(
+            num_val(t, get_child_by_key(t, m.nodes[i], "element_index"))));
+    return out;
+}
+
+std::vector<int> match_indices(YAMLTreeHandle t, const char* spec) {
+    struct name_matches m = match_names(t, spec);
+    std::vector<int> out = indices(t, m);
+    free_name_matches(m);
+    return out;
+}
+
+size_t match_count(YAMLTreeHandle t, const char* spec) {
+    struct name_matches m = match_names(t, spec);
+    size_t n = m.count;
+    free_name_matches(m);
+    return n;
+}
+
+}  // namespace
+
 TEST_CASE("match_names handles null args", "[matching]") {
     struct name_matches m = match_names(nullptr, "a_const");
     REQUIRE(m.count == 0);
@@ -74,273 +101,198 @@ TEST_CASE("compact constants written as a plain map are matched too",
 TEST_CASE("the name pattern is a whole-name (anchored) match", "[matching]") {
     YAMLTreeHandle t = parse_string(MATCH_YAML);
     // "a" alone must not match "a_const" — the whole name has to match.
-    struct name_matches m = match_names(t, "a");
-    REQUIRE(m.count == 0);
-    free_name_matches(m);
+    REQUIRE(match_count(t, "a") == 0);
     delete_tree(t);
 }
 
-TEST_CASE("a bare name matches the elements themselves", "[matching]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
-    // B1a exists in both lattices; each occurrence is returned as its element
-    // (map) node.
-    struct name_matches m = match_names(t, "B1a");
-    REQUIRE(m.count == 2);
-    REQUIRE(key_eq(t, m.nodes[0], "B1a"));
-    REQUIRE(is_map(t, m.nodes[0]));
-    free_name_matches(m);
-    delete_tree(t);
-}
+// ---- Before expansion: a tree holding the PALS node ----
 
-TEST_CASE("an element pattern with a grouped parameter matches all elements",
+TEST_CASE("before expansion an unqualified name reaches the facility "
+          "definitions only",
           "[matching]") {
     YAMLTreeHandle t = parse_string(MATCH_YAML);
-    // B1.* matches B1a and B1b in lat1; both carry BendP.e1. (lat2's B1a has no
-    // BendP.)
-    struct name_matches m = match_names(t, "B1.*>BendP.e1");
-    REQUIRE(m.count == 2);
-    REQUIRE(key_eq(t, m.nodes[0], "e1"));
-    REQUIRE(val_eq(t, m.nodes[0], "0.1"));
-    REQUIRE(val_eq(t, m.nodes[1], "0.3"));
-    free_name_matches(m);
-    delete_tree(t);
-}
 
-TEST_CASE("an ungrouped parameter resolves directly on the element",
-          "[matching]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
-    // B1a appears in both lattices, so its length matches twice.
-    struct name_matches m = match_names(t, "B1a>length");
-    REQUIRE(m.count == 2);
-    REQUIRE(key_eq(t, m.nodes[0], "length"));
-    REQUIRE(val_eq(t, m.nodes[0], "1.2"));
-    REQUIRE(val_eq(t, m.nodes[1], "9.9"));
-    free_name_matches(m);
-    delete_tree(t);
-}
-
-TEST_CASE("an omitted element matches the parameter in every element",
-          "[matching]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
-    // >length : the length of every element, in both lattices and the sub-line.
-    struct name_matches m = match_names(t, ">length");
-    REQUIRE(m.count == 5);
-    free_name_matches(m);
-
-    // A parameter only some elements have (g_ref) matches only those.
-    m = match_names(t, ">BendP.g_ref");
-    REQUIRE(m.count == 1);
-    REQUIRE(key_eq(t, m.nodes[0], "g_ref"));
-    free_name_matches(m);
-    delete_tree(t);
-}
-
-TEST_CASE("`::` restricts a match to an element kind", "[matching]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
-    // Only the Quadrupole matches.
-    struct name_matches m = match_names(t, "Quadrupole::.*>length");
+    // Q1 is defined once under facility; the `- Q1` in main is a reference.
+    struct name_matches m = match_names(t, "Q1>length");
     REQUIRE(m.count == 1);
     REQUIRE(val_eq(t, m.nodes[0], "0.5"));
     free_name_matches(m);
 
-    // Both B1a's are Bends.
-    m = match_names(t, "Bend::B1a>length");
-    REQUIRE(m.count == 2);
-    free_name_matches(m);
+    // S1 is written inside the line of `sub`, so no unqualified name reaches it.
+    REQUIRE(match_count(t, "S1>length") == 0);
 
-    // A kind that no matching element has yields nothing.
-    m = match_names(t, "Sextupole::B1a>length");
-    REQUIRE(m.count == 0);
-    free_name_matches(m);
+    // Beamlines, lattices, controllers and constants are not elements.
+    REQUIRE(match_count(t, ".*>length") == 3);  // B1a, B1b, Q1
     delete_tree(t);
 }
 
-TEST_CASE("`>>` filters by BeamLine/Branch, including sub-lines", "[matching]") {
+TEST_CASE("before expansion a beamline qualifier reaches its line, sub-lines "
+          "included",
+          "[matching]") {
     YAMLTreeHandle t = parse_string(MATCH_YAML);
-    // main contains B1a and B1b directly.
-    struct name_matches m = match_names(t, "main>>B1.*>length");
-    REQUIRE(m.count == 2);
+
+    struct name_matches m = match_names(t, "sub>>S1>length");
+    REQUIRE(m.count == 1);
+    REQUIRE(val_eq(t, m.nodes[0], "0.2"));
     free_name_matches(m);
 
-    // S1 lives in sub-line `sub` of `main`; the `main>>` qualifier reaches it.
+    // `main` uses `sub`, so S1 is an element of main too.
     m = match_names(t, "main>>S1>length");
     REQUIRE(m.count == 1);
     REQUIRE(val_eq(t, m.nodes[0], "0.2"));
     free_name_matches(m);
 
-    // A branch that does not exist yields nothing.
-    m = match_names(t, "nobranch>>B1.*>length");
-    REQUIRE(m.count == 0);
+    // A bare reference in a line is an element of that line: it holds no
+    // parameters yet, but it is what the qualified name selects.
+    m = match_names(t, "main>>Q1");
+    REQUIRE(m.count == 1);
+    REQUIRE(val_eq(t, m.nodes[0], "Q1"));
     free_name_matches(m);
+
+    // A lattice qualifier reaches nothing: no lattice has been built.
+    REQUIRE(match_count(t, "lat1>>>Q1") == 0);
     delete_tree(t);
 }
 
-namespace {
-
-// The example of lattice-elements.md (element name matching): `q1` defined as a
-// facility entry, and a second `q1` written inside the beamline `myline`. Only
-// the first is what `facility>>q1` names.
-const char* FACILITY_YAML =
-    "PALS:\n"
-    "  facility:\n"
-    "    - q1:\n"
-    "        kind: Quadrupole\n"
-    "        length: 0.1\n"
-    "    - unused:\n"
-    "        kind: Sextupole\n"
-    "        length: 0.7\n"
-    "    - myline:\n"
-    "        kind: BeamLine\n"
-    "        line:\n"
-    "          - q1:\n"
-    "              kind: Quadrupole\n"
-    "              length: 0.9\n"
-    "    - mylat:\n"
-    "        kind: Lattice\n"
-    "        branches:\n"
-    "          - mybranch:\n"
-    "              inherit: myline\n";
-
-}  // namespace
-
-TEST_CASE("the branch name `facility` selects the facility node's definitions",
+TEST_CASE("controllers and their variables are matched by name",
           "[matching]") {
-    YAMLTreeHandle t = parse_string(FACILITY_YAML);
+    YAMLTreeHandle t = parse_string(MATCH_YAML);
 
-    // The definition standing outside any beamline, not the `q1` in myline.
-    struct name_matches m = match_names(t, "facility>>q1>length");
+    struct name_matches m = match_names(t, "Controller::ps.*");
+    REQUIRE(m.count == 1);
+    REQUIRE(key_eq(t, m.nodes[0], "ps1"));
+    free_name_matches(m);
+
+    m = match_names(t, "ps1>cur");
     REQUIRE(m.count == 1);
     REQUIRE(val_eq(t, m.nodes[0], "0.1"));
     free_name_matches(m);
 
-    // A beamline qualifier still names the one inside that beamline.
-    m = match_names(t, "myline>>q1>length");
-    REQUIRE(m.count == 1);
-    REQUIRE(val_eq(t, m.nodes[0], "0.9"));
-    free_name_matches(m);
-
-    // A definition no beamline uses is reachable only this way: elements are
-    // otherwise matched where they sit in a `line`, and this one sits in none.
-    m = match_names(t, "facility>>unused>length");
-    REQUIRE(m.count == 1);
-    REQUIRE(val_eq(t, m.nodes[0], "0.7"));
-    free_name_matches(m);
-
-    // The name is still a pattern, and `::` still filters by kind.
-    m = match_names(t, "facility>>.*>length");
-    REQUIRE(m.count == 2);
-    free_name_matches(m);
-
-    m = match_names(t, "facility>>Sextupole::.*>length");
-    REQUIRE(m.count == 1);
-    REQUIRE(val_eq(t, m.nodes[0], "0.7"));
-    free_name_matches(m);
-
+    // Only a controller answers to the Controller kind.
+    REQUIRE(match_count(t, "Controller::Q1") == 0);
     delete_tree(t);
 }
 
-TEST_CASE("a bare line reference is matched only through its beamline",
+// ---- After expansion: the expanded lattice ----
+
+TEST_CASE("in an expanded lattice a name matches every copy of an element",
           "[matching]") {
-    // `- q1` names the element without holding any parameter of its own, but it
-    // can be given them, so it is an element of myline like any other. Named
-    // without saying which line it sits in, though, `q1` is the definition it
-    // points at -- otherwise a set before expansion could not target the
-    // definition alone (lattice-construction.md, s:expand.lat).
-    YAMLTreeHandle t = parse_string(
-        "PALS:\n"
-        "  facility:\n"
-        "    - q1:\n"
-        "        kind: Quadrupole\n"
-        "        length: 0.1\n"
-        "    - myline:\n"
-        "        kind: BeamLine\n"
-        "        line:\n"
-        "          - q1\n");
+    Expanded x(MATCH_YAML);
+    YAMLTreeHandle t = x.full();
 
-    struct name_matches m = match_names(t, "myline>>q1");
-    REQUIRE(m.count == 1);
-    REQUIRE(val_eq(t, m.nodes[0], "q1"));  // still the bare reference scalar
-    free_name_matches(m);
+    REQUIRE(match_indices(t, "B1a") == std::vector<int>{2, 6});
+    REQUIRE(match_indices(t, "S1") == std::vector<int>{5});
 
-    // Unqualified, the reference is passed over, and nothing else here sits in
-    // a line -- the definition is reached by naming the facility node instead.
-    m = match_names(t, "q1>length");
-    REQUIRE(m.count == 0);
-    free_name_matches(m);
-
-    m = match_names(t, "facility>>q1>length");
-    REQUIRE(m.count == 1);
+    struct name_matches m = match_names(t, "B1.*>BendP.e1");
+    REQUIRE(m.count == 3);
     REQUIRE(val_eq(t, m.nodes[0], "0.1"));
+    REQUIRE(val_eq(t, m.nodes[1], "0.3"));
+    REQUIRE(val_eq(t, m.nodes[2], "0.1"));
     free_name_matches(m);
 
-    delete_tree(t);
-}
-
-TEST_CASE("`facility` is a keyword where a branch name goes, not a pattern",
-          "[matching]") {
-    YAMLTreeHandle t = parse_string(FACILITY_YAML);
-
-    // A branch pattern wide enough to spell `facility` still means branches
-    // only: it reaches the `q1` in myline and nothing in the facility list.
-    struct name_matches m = match_names(t, ".*>>q1>length");
+    // An ungrouped parameter resolves directly on the element.
+    m = match_names(t, "Q1>length");
     REQUIRE(m.count == 1);
-    REQUIRE(val_eq(t, m.nodes[0], "0.9"));
+    REQUIRE(val_eq(t, m.nodes[0], "0.5"));
     free_name_matches(m);
 
-    // A lattice qualifier cannot apply: a definition belongs to no lattice
-    // until a lattice is expanded around it.
-    m = match_names(t, "mylat>>>facility>>q1>length");
-    REQUIRE(m.count == 0);
-    free_name_matches(m);
-
-    delete_tree(t);
-}
-
-TEST_CASE("`>>>` selects among lattices with the same element name",
-          "[matching]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
-    struct name_matches m = match_names(t, "lat1>>>B1a>length");
+    // Dropping the parameter matches the group; a missing one matches nothing.
+    m = match_names(t, "B1b>BendP");
     REQUIRE(m.count == 1);
-    REQUIRE(val_eq(t, m.nodes[0], "1.2"));
-    free_name_matches(m);
-
-    m = match_names(t, "lat2>>>B1a>length");
-    REQUIRE(m.count == 1);
-    REQUIRE(val_eq(t, m.nodes[0], "9.9"));
-    free_name_matches(m);
-    delete_tree(t);
-}
-
-TEST_CASE("dropping the parameter matches the parameter group", "[matching]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
-    // Only lat1's B1a has a BendP group.
-    struct name_matches m = match_names(t, "B1a>BendP");
-    REQUIRE(m.count == 1);
-    REQUIRE(key_eq(t, m.nodes[0], "BendP"));
     REQUIRE(is_map(t, m.nodes[0]));
     free_name_matches(m);
-    delete_tree(t);
+    REQUIRE(match_count(t, "B1a>BendP.nope") == 0);
+}
+
+TEST_CASE("kind, branch and lattice qualifiers filter the match",
+          "[matching]") {
+    Expanded x(MATCH_YAML);
+    YAMLTreeHandle t = x.full();
+
+    REQUIRE(match_indices(t, "Quadrupole::.*") == std::vector<int>{4});
+    REQUIRE(match_indices(t, "Bend::.*") == std::vector<int>{2, 3, 6});
+    REQUIRE(match_count(t, "Sextupole::B1a") == 0);
+
+    REQUIRE(match_indices(t, "main>>S1") == std::vector<int>{5});
+    REQUIRE(match_count(t, "nobranch>>S1") == 0);
+
+    REQUIRE(match_indices(t, "lat1>>>Q1") == std::vector<int>{4});
+    REQUIRE(match_count(t, "lat2>>>Q1") == 0);
+    REQUIRE(match_indices(t, "lat1>>>main>>Q1") == std::vector<int>{4});
+}
+
+TEST_CASE("`#N` keeps the N-th match and an index names a position",
+          "[matching]") {
+    Expanded x(MATCH_YAML);
+    YAMLTreeHandle t = x.full();
+
+    REQUIRE(match_indices(t, "B1a#2") == std::vector<int>{6});
+    REQUIRE(match_indices(t, "Bend::.*#3") == std::vector<int>{6});
+    REQUIRE(match_count(t, "B1a#3") == 0);
+
+    REQUIRE(match_indices(t, "main>>4") == std::vector<int>{4});
+    REQUIRE(match_indices(t, "4") == std::vector<int>{4});
+}
+
+TEST_CASE("a range runs to the next end element, wrapping round the line",
+          "[matching]") {
+    Expanded x(MATCH_YAML);
+    YAMLTreeHandle t = x.full();
+
+    REQUIRE(match_indices(t, "B1b:S1") == std::vector<int>{3, 4, 5});
+    // S1 comes after B1b, so this one wraps: S1 to the end, then the start to
+    // B1b.
+    REQUIRE(match_indices(t, "S1:B1b") == std::vector<int>{5, 6, 7, 1, 2, 3});
+
+    // The parameter path applies to the whole range.
+    struct name_matches m = match_names(t, "Q1:S1>length");
+    REQUIRE(m.count == 2);
+    REQUIRE(val_eq(t, m.nodes[0], "0.5"));
+    REQUIRE(val_eq(t, m.nodes[1], "0.2"));
+    free_name_matches(m);
+}
+
+TEST_CASE("unions and intersections combine element sets", "[matching]") {
+    Expanded x(MATCH_YAML);
+    YAMLTreeHandle t = x.full();
+
+    REQUIRE(match_indices(t, "Q1, S1") == std::vector<int>{4, 5});
+    REQUIRE(match_indices(t, "Bend::.* & B1b:S1") == std::vector<int>{3});
+    // `&` binds tighter than `,`: B1a, then the Quadrupoles among Q1.
+    REQUIRE(match_indices(t, "B1a, Q1 & Quadrupole::.*") ==
+            std::vector<int>{2, 6, 4});
+}
+
+TEST_CASE("operators inside a bracket group belong to the pattern",
+          "[matching]") {
+    Expanded x(MATCH_YAML);
+    YAMLTreeHandle t = x.full();
+    // The comma in {1,2} is part of the regex, not a union.
+    REQUIRE(match_indices(t, "B\\d{1,2}a") == std::vector<int>{2, 6});
+    REQUIRE(match_indices(t, "(B1a|Q1)") == std::vector<int>{2, 4, 6});
+}
+
+TEST_CASE("a MetaP component selects elements by its value", "[matching]") {
+    Expanded x(MATCH_YAML);
+    YAMLTreeHandle t = x.full();
+    REQUIRE(match_indices(t, "alias::black") == std::vector<int>{2, 4, 6});
+    REQUIRE(match_indices(t, "alias::bl.*") == std::vector<int>{2, 4, 6});
+    REQUIRE(match_count(t, "alias::white") == 0);
 }
 
 TEST_CASE("no matches yields an empty result", "[matching]") {
-    YAMLTreeHandle t = parse_string(MATCH_YAML);
-    struct name_matches m = match_names(t, "nosuch>foo");
+    Expanded x(MATCH_YAML);
+    struct name_matches m = match_names(x.full(), "nosuch>foo");
     REQUIRE(m.count == 0);
     REQUIRE(m.nodes == nullptr);
     free_name_matches(m);
-
-    // A missing parameter path on an existing element also yields nothing.
-    m = match_names(t, "B1a>BendP.nope");
-    REQUIRE(m.count == 0);
-    free_name_matches(m);
-    delete_tree(t);
 }
 
 TEST_CASE("a malformed pattern yields an empty result, not a crash",
           "[matching]") {
     YAMLTreeHandle t = parse_string(MATCH_YAML);
-    struct name_matches m = match_names(t, "(unclosed");
-    REQUIRE(m.count == 0);
-    free_name_matches(m);
+    REQUIRE(match_count(t, "(unclosed") == 0);
+    REQUIRE(match_count(t, "Q1#0") == 0);
+    REQUIRE(match_count(t, "Q1>length>x") == 0);
     delete_tree(t);
 }

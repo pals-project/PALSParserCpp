@@ -110,15 +110,16 @@ TEST_CASE("Expansion preserves the key order of the source file", "[key_order]")
     // `multipass` root line, so its one element also picks up a trailing
     // `multipass_index`, appended after the inherited keys. Finally, the element
     // bookkeeper appends its computed output groups (`ReferenceP`, `FloorP`),
-    // `s_position` and `element_index`, in that order, after everything the file
-    // supplied.
+    // `s_position`, `element_index` and `ShiftedFloorP`, in that order, after
+    // everything the file supplied.
     YAMLNodeId line_seq = get_child_by_key(lat.full_expanded, e_line, "line");
     YAMLNodeId thingZ = get_child_by_index(
         lat.full_expanded, get_child_by_index(lat.full_expanded, line_seq, 0), 0);
     REQUIRE(key_eq(lat.full_expanded, thingZ, "thingZ"));
     const std::vector<std::string> inherited = {
         "kind",           "length",     "inherit",    "multipass_index",
-        "ReferenceP",     "FloorP",     "s_position", "element_index"};
+        "ReferenceP",     "FloorP",     "s_position", "element_index",
+        "ShiftedFloorP"};
     REQUIRE(keys_of(lat.full_expanded, thingZ) == inherited);
     REQUIRE(val_eq(lat.full_expanded,
                    get_child_by_key(lat.full_expanded, thingZ, "multipass_index"),

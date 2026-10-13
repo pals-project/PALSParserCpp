@@ -7,6 +7,13 @@ PALS:
     - "Layout only. Magnet settings live in load_settings.pals.yaml."
 
   facility:
+    - Q1a:
+        kind: Quadrupole
+        length: 0.5
+    - Q1b:
+        kind: Quadrupole
+        length: 0.5
+
     - main:
         kind: BeamLine
         line:
@@ -15,15 +22,11 @@ PALS:
               ReferenceP:
                 species_ref: "electron"
                 E_tot_ref: 1.0e9
-          - Q1a:
-              kind: Quadrupole
-              length: 0.5
+          - Q1a
           - D1:
               kind: Drift
               length: 1.2
-          - Q1b:
-              kind: Quadrupole
-              length: 0.5
+          - Q1b
 
     - lat1:
         kind: Lattice

@@ -126,35 +126,36 @@ as `Ks2L`; the `Ks2` goes, and `Ks2` comes back as `0.5 / 0.27`. Without this
 the two would be left contradicting each other and reported as inconsistent.
 
 The rule holds for every writer that reaches a parameter from outside the
-element definition — sets before and after `expand_lattice`, and ABSOLUTE
+element definition — sets in `facility` and in `post_expansion`, and ABSOLUTE
 controllers, which are ordered among themselves by the order they are evaluated
 in. Two members written *inside* one element definition are a different matter:
 neither is "previous", so that stays an inconsistency for the bookkeeper to
 report.
 
-### `expand_lattice` and where a set acts
+### `facility`, `post_expansion` and where a set acts
 
-An `expand_lattice` node divides the `facility` list in two, and which side a
-set sits on decides what it writes:
+Which list a set sits in decides what it writes:
 
-- **Before** `expand_lattice` a set acts on the element *definitions*, and only
-  on those defined earlier in the list — an element defined after it is
-  untouched. One definition is written once, so every copy of a repeated element
-  inherits the same value.
-- **After** `expand_lattice` a set acts on the already-expanded lattice, so each
-  copy is a separate element and is written separately. The bookkeeper has
-  already run at this point, so a value may use computed parameters such as
+- A set in `facility` acts on the element *definitions*, and only on those
+  defined earlier in the list — an element defined after it is untouched. An
+  unqualified name reaches the definitions standing under `facility`, not the
+  elements written inside a beamline's `line`; those answer to a name qualified
+  by their beamline (`myline>>q1`). One definition is written once, so every
+  copy of a repeated element inherits the same value.
+- A set in `post_expansion` acts on the already-expanded lattice, so each copy
+  is a separate element and is written separately. The bookkeeper has already
+  run at this point, so a value may use computed parameters such as
   `SELF.s_position`.
 
 ## The order of the passes
 
 ```text
-pre-expansion sets
+facility sets
   → branch and fork expansion
   → expression evaluation
   → ABSOLUTE controllers
   → element bookkeeper
-  → post-expansion sets
+  → post_expansion sets
   → expression evaluation
   → ABSOLUTE controllers again
   → element bookkeeper again
@@ -163,7 +164,7 @@ pre-expansion sets
 Applying the controllers last is what keeps a controller authoritative over a
 parameter a later set also writes. The second bookkeeper pass recomputes what
 those writes invalidated: the reference, floor and position values, and the
-family members a post-expansion set or a controller nullified.
+family members a `post_expansion` set or a controller nullified.
 
 The snapshot that separates `expanded` from `full_expanded` is taken between the
 first expression evaluation and the first bookkeeper pass — see

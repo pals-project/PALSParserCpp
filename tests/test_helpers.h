@@ -128,9 +128,14 @@ inline bool close_rel(double got, double want) {
 }
 
 // ─── shared matching fixture ────────────────────────────────────────────────
-// A small two-lattice lattice covering constants, variables, elements with
-// ungrouped (length) and grouped (BendP.e1) parameters, a sub-line (sub/S1),
-// and a repeated element name (B1a in both lattices) to exercise `>>>`.
+// A small lattice covering constants, variables, a controller, elements with
+// ungrouped (length) and grouped (BendP.e1) parameters and MetaP aliases, a
+// sub-line (sub/S1) used inside another line, and an element (B1a) used twice.
+// Expanded, the branch `main` of `lat1` is
+//
+//   1 start, 2 B1a, 3 B1b, 4 Q1, 5 S1, 6 B1a, 7 branch_end
+//
+// and `lat2` is the other lattice, which is not the one expanded.
 inline const char* MATCH_YAML =
     "PALS:\n"
     "  facility:\n"
@@ -140,38 +145,74 @@ inline const char* MATCH_YAML =
     "    - my_var:\n"
     "        kind: variable\n"
     "        value: 37\n"
-    "    - lat1:\n"
-    "        kind: Lattice\n"
-    "        branches:\n"
-    "          - main:\n"
-    "              kind: BeamLine\n"
-    "              line:\n"
-    "                - B1a:\n"
-    "                    kind: Bend\n"
-    "                    length: 1.2\n"
-    "                    BendP:\n"
-    "                      e1: 0.1\n"
-    "                      g_ref: 0.02\n"
-    "                - B1b:\n"
-    "                    kind: Bend\n"
-    "                    length: 1.5\n"
-    "                    BendP:\n"
-    "                      e1: 0.3\n"
-    "                - Q1:\n"
-    "                    kind: Quadrupole\n"
-    "                    length: 0.5\n"
-    "                - sub:\n"
-    "                    kind: BeamLine\n"
-    "                    line:\n"
-    "                      - S1:\n"
-    "                          kind: Sextupole\n"
-    "                          length: 0.2\n"
+    "    - ps1:\n"
+    "        kind: Controller\n"
+    "        variables:\n"
+    "          cur: 0.1\n"
+    "        controls:\n"
+    "          - parameter: Q1>MagneticMultipoleP.Kn1\n"
+    "            expression: 2*cur\n"
+    "    - start:\n"
+    "        kind: BeginningEle\n"
+    "        ReferenceP:\n"
+    "          species_ref: electron\n"
+    "          E_tot_ref: 1e9\n"
+    "    - B1a:\n"
+    "        kind: Bend\n"
+    "        length: 1.2\n"
+    "        BendP:\n"
+    "          e1: 0.1\n"
+    "          g_ref: 0.02\n"
+    "        MetaP:\n"
+    "          alias: black\n"
+    "    - B1b:\n"
+    "        kind: Bend\n"
+    "        length: 1.5\n"
+    "        BendP:\n"
+    "          e1: 0.3\n"
+    "    - Q1:\n"
+    "        kind: Quadrupole\n"
+    "        length: 0.5\n"
+    "        MetaP:\n"
+    "          alias: black\n"
+    "    - sub:\n"
+    "        kind: BeamLine\n"
+    "        line:\n"
+    "          - S1:\n"
+    "              kind: Sextupole\n"
+    "              length: 0.2\n"
+    "    - main:\n"
+    "        kind: BeamLine\n"
+    "        line:\n"
+    "          - start\n"
+    "          - B1a\n"
+    "          - B1b\n"
+    "          - Q1\n"
+    "          - sub\n"
+    "          - B1a\n"
     "    - lat2:\n"
     "        kind: Lattice\n"
     "        branches:\n"
-    "          - other:\n"
-    "              kind: BeamLine\n"
-    "              line:\n"
-    "                - B1a:\n"
-    "                    kind: Bend\n"
-    "                    length: 9.9\n";
+    "          - main\n"
+    "    - lat1:\n"
+    "        kind: Lattice\n"
+    "        branches:\n"
+    "          - main\n";
+
+// The lattice trees of a document held in a string, freed together.
+struct Expanded {
+    struct lattices lat;
+    explicit Expanded(const char* doc, const char* root = nullptr)
+        : lat(expand_PALS_string(doc, root)) {}
+    explicit Expanded(const std::string& doc, const char* root = nullptr)
+        : Expanded(doc.c_str(), root) {}
+    ~Expanded() {
+        delete_tree(lat.original);
+        delete_tree(lat.combined);
+        delete_tree(lat.expanded);
+        delete_tree(lat.full_expanded);
+        delete_tree(lat.adjunct);
+        free_lattice_problems(lat.problems);
+    }
+    YAMLTreeHandle full() const { return lat.full_expanded; }
+};

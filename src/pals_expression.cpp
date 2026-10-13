@@ -412,6 +412,7 @@ bool builtin_constant(const std::string& name, double& out) {
   // "simplify" this to apc::CLASSICAL_RADIUS_FACTOR without resolving the units
   // question upstream first — it would silently introduce a factor of 1e6.
   if (name == "pi") { out = kPi; return true; }
+  if (name == "twopi") { out = 2 * kPi; return true; }
   if (name == "c_light") { out = apc::C_LIGHT; return true; }
   if (name == "h_planck") { out = apc::H_PLANCK; return true; }
   if (name == "hbar") { out = apc::H_BAR; return true; }

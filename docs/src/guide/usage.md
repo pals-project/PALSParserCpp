@@ -123,9 +123,14 @@ delayed (`expr(...)`) expression.
 
 **Sets.** A `set` with no `parameter` or no `value`; a target that is
 malformed, names no element parameter, or matches nothing (for a
-pre‑`expand_lattice` set, nothing *defined before it*); a value that cannot be
+`facility` set, nothing *defined before it*); a value that cannot be
 evaluated; and a value that reads a parameter whose value is still to be
 derived during expansion.
+
+**Placement.** A `CoordinateSetP` whose origin element matches no element, or
+more than one, or one whose placement is not known first; two `Fiducial`s fixing
+the same stretch of a branch; an element supported by two `Girder`s; a `Girder`
+placed from `PREVIOUS_ELEMENT`; and a circular chain of girder support.
 
 **Bookkeeping.** A branch whose first element gives neither a reference species
 nor a reference energy, so the reference parameters cannot be computed; and a
@@ -139,7 +144,11 @@ instead, so there is nothing to disagree with.)
 **Vocabulary.** An element kind or parameter group name that is not one the
 standard defines — a `FlorP` group is valid YAML and would otherwise go
 unrecognised in silence — reported with a "did you mean" suggestion where a
-near match exists.
+near match exists. Also a name that breaks the name syntax or is a reserved word
+(`SELF`, `PARAMETER`); a constant or variable redefined to a different value or
+defined circularly; a `Girder` defined anywhere but under `PALS: girders`; a
+`Lattice` or `use` under `post_expansion`; and an `adjustments` block that is not
+a list of `optimize` blocks of `vary` and `target` entries.
 
 **Deliberately not computed.** Where the standard fixes a value's magnitude but
 not how to produce it, this library reports rather than guesses: an
@@ -152,7 +161,8 @@ so the species is left as the upstream one).
 
 Which of the five trees answers a given question, and what the expansion adds to
 `full_expanded` that appears nowhere else — `element_index`, `s_position`,
-`ReferenceP`, `FloorP`, the derived parameter families, the `branch_end` cap —
+`ReferenceP`, `FloorP`, `ShiftedFloorP`, the derived parameter families, the
+`branch_end` cap —
 is covered in [The five trees](trees.md).
 
 ## Navigating and editing trees

@@ -1,0 +1,46 @@
+name: standard-examples
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.head_ref }}-standard-examples
+  cancel-in-progress: true
+
+permissions:
+  contents: read  # only needs access to check out code and install dependencies
+
+jobs:
+  standard-examples:
+    name: standard examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The standard is validated at a pinned commit (bumped by the
+      # weekly_update workflow), so changes to it cannot break unrelated PRs.
+      - name: Read the pinned PALS standard commit
+        id: pin
+        run: |
+          sha=$(grep -vE '^[[:space:]]*(#|$)' tests/standard_examples_git_reference.txt | head -n1)
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+      - name: Checkout PALS repository
+        uses: actions/checkout@v7
+        with:
+          repository: pals-project/pals
+          ref: ${{ steps.pin.outputs.sha }}
+          path: pals_temp
+          fetch-depth: 1
+          sparse-checkout: |
+            examples/
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel --target validate_standard_examples
+      - name: Run standard examples
+        run: |
+          ./build/tests/validate_standard_examples \
+            --root pals_temp/examples \
+            --manifest tests/standard_examples_manifest.txt

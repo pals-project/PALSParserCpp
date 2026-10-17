@@ -1,0 +1,50 @@
+# Exceptions for the standard example lattices in pals-project/pals/examples,
+# used by validate_standard_examples.
+#
+# Every *.pals.yaml file under the examples root is discovered automatically
+# and is expected to be `clean` -- no manifest entry needed. Two kinds of
+# files are exempted automatically:
+#   - *.subpals.yaml include fragments (spliced into, and checked through,
+#     the file that includes them);
+#   - files named in another file's `load` list (combined into, and checked
+#     through, that file); they are treated as `member`.
+# List a file here only when the default is not what it should be.
+#
+# Entry format, one per line:
+#
+#   clean    <elements>  <path>   expands with zero problems and exactly
+#                                 <elements> elements, summed over every
+#                                 branch of the expanded lattice (including
+#                                 fork-created branches and each branch's
+#                                 trailing branch_end). Unlisted files are
+#                                 `clean` with the count not pinned: any
+#                                 non-zero number of elements passes.
+#   lenient  <elements>  <path>   expands to <elements> elements; problems
+#                                 are printed but tolerated
+#   combine  -           <path>   a `load` joiner whose combined document
+#                                 holds no lattice: the only acceptable
+#                                 problem is "no lattice found to expand"
+#   member   -           <path>   combined into another file through `load`
+#                                 and checked there; only its existence is
+#                                 checked here (normally auto-detected; an
+#                                 explicit `clean`/`lenient` entry overrides
+#                                 the auto-detection for a file that is both
+#                                 loaded and expected to stand on its own)
+#
+# <elements> may be `-` for "not pinned". Paths are relative to --root;
+# blank lines and `#` comments are ignored.
+
+# fodo defines no reference particle yet, so the
+# reference-parameter bookkeeping reports it cannot run.
+lenient  16   fodo.pals.yaml
+
+# Joiners of the deliberately minimal load families: their combined documents
+# hold notes (or extension labels) only, no lattice.
+combine  -    unit_tests/loading/diamond/joiner.pals.yaml
+combine  -    unit_tests/loading/extension_labels/joiner.pals.yaml
+combine  -    unit_tests/loading/implicit_self/joiner.pals.yaml
+combine  -    unit_tests/loading/include/joiner.pals.yaml
+combine  -    unit_tests/loading/nested/joiner.pals.yaml
+combine  -    unit_tests/loading/relative_paths/joiner.pals.yaml
+combine  -    unit_tests/loading/self_position/joiner.pals.yaml
+combine  -    unit_tests/loading/version_match/joiner.pals.yaml

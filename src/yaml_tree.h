@@ -29,6 +29,11 @@ struct ParsedData {
     ryml::Tree tree;
     std::string buffer;
     std::map<size_t, size_t> provenance;
+    // Controller-driven parameters: a node of this tree -> the `combined`
+    // nodes of the `expression`s of every controller driving it, in evaluation
+    // order. Kept apart from `provenance` because a parameter may be driven by
+    // several controllers at once.
+    std::map<size_t, std::vector<size_t>> drivers;
 };
 
 #define GET_TREE(handle) (static_cast<ParsedData*>(handle)->tree)

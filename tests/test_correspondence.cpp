@@ -298,9 +298,9 @@ const char* WRITERS_DOC =
 TEST_CASE("original_node leads a value to the text it was evaluated from",
           "[correspondence]") {
     // A value that no set or controller wrote leads to its own text; one that
-    // was written leads to the text that wrote it -- a facility or
-    // post_expansion `set` value, a compact `sets` value, a controller
-    // expression -- never to the value it replaced.
+    // was written by a set leads to the text that wrote it -- a facility or
+    // post_expansion `set` value, a compact `sets` value -- never to the value
+    // it replaced. A controller-driven one has controllers, not a source.
     struct lattices lat = expand_PALS_string(WRITERS_DOC, nullptr);
     REQUIRE(lat.problems.count == 0);
 
@@ -314,11 +314,105 @@ TEST_CASE("original_node leads a value to the text it was evaluated from",
         REQUIRE(source_text(lat, tree, 4, g, "Kn1") == "0.4");
         REQUIRE(source_text(lat, tree, 5, g, "Kn1") ==
                 "expr(q1>MagneticMultipoleP.Kn1 + 0.1)");
-        REQUIRE(source_text(lat, tree, 6, g, "Kn1") == "2 * cur");
+        // Driven by a controller: no single source text.
+        REQUIRE(source_text(lat, tree, 6, g, "Kn1") == "");
     }
 
     // A value the parser computed has no source.
     REQUIRE(source_text(lat, lat.full_expanded, 1, "FloorP", "z") == "");
+
+    free_lattice_problems(lat.problems);
+    delete_tree(lat.original);
+    delete_tree(lat.combined);
+    delete_tree(lat.expanded);
+    delete_tree(lat.full_expanded);
+    delete_tree(lat.adjunct);
+}
+
+TEST_CASE("controller_expressions lists every controller driving a parameter",
+          "[correspondence][controller]") {
+    // Two ABSOLUTE controllers sum into q1's Kn1; a RELATIVE one drives q2's.
+    const char* doc =
+        "PALS:\n"
+        "  facility:\n"
+        "    - q1:\n"
+        "        kind: Quadrupole\n"
+        "    - q2:\n"
+        "        kind: Quadrupole\n"
+        "        MagneticMultipoleP:\n"
+        "          Kn1: 0.3\n"
+        "    - ps1:\n"
+        "        kind: Controller\n"
+        "        variables:\n"
+        "          cur: 0.25\n"
+        "        controls:\n"
+        "          - parameter: q1>MagneticMultipoleP.Kn1\n"
+        "            expression: 2 * cur\n"
+        "    - ps2:\n"
+        "        kind: Controller\n"
+        "        variables:\n"
+        "          cur: 0.1\n"
+        "        controls:\n"
+        "          - parameter: q1>MagneticMultipoleP.Kn1\n"
+        "            expression: cur\n"
+        "    - knob:\n"
+        "        kind: Controller\n"
+        "        control_type: RELATIVE\n"
+        "        variables:\n"
+        "          k: 0.0\n"
+        "        controls:\n"
+        "          - parameter: q2>MagneticMultipoleP.Kn1\n"
+        "            expression: 3 * k\n"
+        "    - ln:\n"
+        "        kind: BeamLine\n"
+        "        line:\n"
+        "          - begin:\n"
+        "              kind: BeginningEle\n"
+        "              ReferenceP: {species_ref: electron, E_tot_ref: 1.0e9}\n"
+        "          - q1\n"
+        "          - q2\n"
+        "    - lat1:\n"
+        "        kind: Lattice\n"
+        "        branches:\n"
+        "          - ln\n"
+        "    - use: lat1\n";
+    struct lattices lat = expand_PALS_string(doc, nullptr);
+    REQUIRE(lat.problems.count == 0);
+
+    auto drivers = [&](YAMLTreeHandle tree, size_t index) {
+        YAMLNodeId lat1 = get_child_by_index(tree, get_root(tree), 0);
+        YAMLNodeId branch = get_child_by_index(
+            tree,
+            get_child_by_index(tree, get_child_by_key(tree, lat1, "branches"), 0),
+            0);
+        YAMLNodeId ele = get_child_by_index(
+            tree,
+            get_child_by_index(tree, get_child_by_key(tree, branch, "line"), index),
+            0);
+        YAMLNodeId kn1 = get_child_by_key(
+            tree, get_child_by_key(tree, ele, "MagneticMultipoleP"), "Kn1");
+        REQUIRE(kn1 != YAML_NULL_ID);
+        struct node_list l = controller_expressions(lat.combined, tree, kn1);
+        std::vector<std::string> out;
+        for (size_t i = 0; i < l.count; ++i) {
+            YAMLNodeId ctrl = get_parent(
+                lat.original,
+                get_parent(lat.original, get_parent(lat.original, l.nodes[i])));
+            char* k = get_node_key(lat.original, ctrl);
+            char* v = as_string(lat.original, l.nodes[i]);
+            out.push_back(std::string(k) + ": " + v);
+            yaml_free_string(k);
+            yaml_free_string(v);
+        }
+        free_node_list(l);
+        return out;
+    };
+
+    for (YAMLTreeHandle tree : {lat.full_expanded, lat.expanded}) {
+        REQUIRE(drivers(tree, 1) ==
+                std::vector<std::string>{"ps1: 2 * cur", "ps2: cur"});
+        REQUIRE(drivers(tree, 2) == std::vector<std::string>{"knob: 3 * k"});
+    }
 
     free_lattice_problems(lat.problems);
     delete_tree(lat.original);

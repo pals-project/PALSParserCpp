@@ -280,10 +280,16 @@ char* text = as_string(lat.original, src);   // e.g. "expr(2 * q1>MagneticMultip
 ```
 
 That is how a program tells whether a value was delayed (`expr(...)`) or
-immediate. A value written by a `set` leads to that set's `value`, and one
-driven by an ABSOLUTE controller to the controller's `expression` (the first
-one, when several sum): the text that gave the value, not the value it
-replaced. A value the parser computed returns `YAML_NULL_ID`.
+immediate. A value written by a `set` leads to that set's `value`: the text
+that gave the value, not the value it replaced. A value the parser computed
+returns `YAML_NULL_ID`, and so does one an ABSOLUTE controller drives, whose
+value is the controllers' (several may sum) rather than any one text's.
+
+For a controlled parameter, `controller_expressions(combined, tree, node)`
+lists every controller driving it, ABSOLUTE or RELATIVE: the `original` node of
+each `controls` entry's `expression`, in evaluation order. Three `get_parent`
+steps from an expression reach its controller. Free the list with
+`free_node_list`.
 
 ## Problems
 

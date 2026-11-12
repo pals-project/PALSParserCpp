@@ -17,11 +17,11 @@
 
 /**
  * @defgroup parse Parsing & expansion
- * @brief Read PALS/YAML from disk or memory and expand a lattice into its four
+ * @brief Read PALS/YAML from disk or memory and expand a lattice into its five
  *        representations.
  *
  * @defgroup correspond Node correspondence
- * @brief Map a single logical node across the original, combined, full_expanded
+ * @brief Map a single logical node across the original, combined, full_expanded and
  *        adjunct trees.
  *
  * @defgroup namematch Name matching
@@ -247,7 +247,7 @@ extern "C" {
 #endif
 
 /**
- * Builds and returns all four representations of a lattice file.
+ * Builds and returns all five representations of a lattice file.
  * @ingroup parse
  *
  * @param filename     Path to the top-level YAML lattice file.
@@ -311,7 +311,7 @@ YAML_API struct lattices parse_and_expand_PALS(const char* filename,
                                       const char* root_lattice);
 
 /**
- * Builds the same four representations from a document held in memory.
+ * Builds the same five representations from a document held in memory.
  * @ingroup parse
  *
  * Identical to parse_and_expand_PALS() in every respect but where the document

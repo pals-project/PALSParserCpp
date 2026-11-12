@@ -81,7 +81,7 @@ build/tests/tests "[check]"
 
 The tests do not create lattice files. A lattice a test needs only in order to
 expand it is held in a string and passed to `expand_PALS_string`, which builds
-the same four trees `parse_and_expand_PALS` does without going through the disk:
+the same five trees `parse_and_expand_PALS` does without going through the disk:
 
 ```cpp
 struct lattices lat = expand_PALS_string(doc, nullptr);

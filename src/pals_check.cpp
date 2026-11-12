@@ -35,13 +35,13 @@ const std::set<std::string>& known_kinds() {
 // one file each under source/parameters).
 const std::set<std::string>& known_groups() {
     static const std::set<std::string> g = {
-        "ACKickerP",         "ApertureP",      "BeamBeamP",   "BendP",
-        "BodyShiftP",        "ConverterP",     "CoordinateSetP",
-        "ElectricMultipoleP", "FloorP",        "FoilP",       "ForkFromP",
-        "ForkP",             "GirderP",        "MagneticMultipoleP",
-        "MetaP",             "ParticleP",      "PatchP",      "ReferenceChangeP",
-        "ReferenceP",        "RFP",            "ShiftedFloorP", "SolenoidP",
-        "TaylorP",           "TrackingP",      "TwissP"};
+        "ACKickerP",          "ApertureP",     "BeamBeamP",     "BendP",
+        "BodyShiftP",         "ConverterP",    "CoordinateSetP",
+        "ElectricMultipoleP", "FloorP",        "FoilP",         "ForkFromP",
+        "ForkP",              "GirderP",       "MagneticMultipoleP",
+        "MaterialP",          "MetaP",         "ParticleP",     "PatchP",
+        "ReferenceChangeP",   "ReferenceP",    "RFP",           "ShiftedFloorP",
+        "SolenoidP",          "TaylorP",       "TrackingP",     "TwissP"};
     return g;
 }
 
@@ -70,11 +70,17 @@ const std::map<std::string, std::set<std::string>>& group_params() {
          {"origin_ele", "origin_ele_ref_pt", "x_offset", "y_offset", "z_offset",
           "x_rot", "y_rot", "z_rot"}},
         {"FloorP", {"x", "y", "z", "theta", "phi", "psi", "user_set"}},
-        {"FoilP", {"dE_ref"}},
+        {"FoilP",
+         {"dE_ref", "material", "thickness", "dthickness_dx", "density",
+          "area_density", "radiation_length", "final_charge", "x_min",
+          "x_max", "y_min", "y_max"}},
         {"ForkP",
          {"to_line", "destination_element", "new_branch",
           "propagate_reference", "forked_to"}},
         {"GirderP", {"elements"}},
+        {"MaterialP",
+         {"name", "state", "density", "area_density", "radiation_length",
+          "mean_excitation_energy", "components"}},
         {"ParticleP",
          {"x",           "px",          "y",          "py",
           "z",           "pz",          "spin_x",     "spin_y",
@@ -92,7 +98,7 @@ const std::map<std::string, std::set<std::string>>& group_params() {
           "species_ref"}},
         {"ReferenceP", {"species_ref", "pc_ref", "E_tot_ref", "time_ref"}},
         {"RFP",
-         {"frequency", "harmon", "voltage", "gradient", "phase",
+         {"frequency", "harmonic_number", "voltage", "gradient", "phase",
           "multipass_phase", "cavity_type", "num_cells", "zero_phase",
           "L_active", "dE_ref"}},
         {"ShiftedFloorP", {"x", "y", "z", "theta", "phi", "psi"}},
@@ -150,6 +156,7 @@ enum_values() {
                {"ARC", "CHORD", "ENTRANCE_COORDS", "EXIT_COORDS"}}}},
             {"CoordinateSetP",
              {{"origin_ele_ref_pt", {"ENTRANCE_END", "CENTER", "EXIT_END"}}}},
+            {"MaterialP", {{"state", {"SOLID", "LIQUID", "GAS", "PLASMA"}}}},
             {"PatchP", {{"ref_coords", {"ENTRANCE_END", "EXIT_END"}}}},
             {"RFP",
              {{"cavity_type", {"STANDING_WAVE", "TRAVELING_WAVE"}},
@@ -202,7 +209,7 @@ const std::map<std::string, std::set<std::string>>& kind_groups() {
         {"BeginningEle", join({common}, {"ForkFromP"})},
         {"Bend", join({magnet}, {"BendP"})},
         {"Converter", join({magnet}, {"ConverterP"})},
-        {"CrabCavity", magnet},
+        {"CrabCavity", join({magnet}, {"RFP"})},
         {"Drift", common},
         {"EGun", magnet},
         {"Fiducial", join({common}, {"CoordinateSetP"})},
@@ -282,9 +289,6 @@ bool is_multipole_param(const std::string& group, const std::string& key) {
     const std::set<std::string>& field =
         group == "MagneticMultipoleP" ? magnetic : electric;
 
-    // `geometry` selects how the multipoles of a bend are evaluated.
-    if (key == "geometry") return true;
-
     std::string s = key;
     // `_taper` names the tapering parameter of the field parameter it follows.
     const std::string taper = "_taper";
@@ -341,8 +345,17 @@ const std::set<std::string>& element_params(const std::string& kind) {
         return s;
     }();
 
+    // A UnionEle lists the elements it holds (lattice-element-kinds.md,
+    // s:unionele).
+    static const std::set<std::string> unionele = [] {
+        std::set<std::string> s = base;
+        s.insert("elements");
+        return s;
+    }();
+
     if (kind == "BeamLine") return beamline;
     if (kind == "Lattice") return lattice;
+    if (kind == "UnionEle") return unionele;
     if (kind == "Controller") return controller;
     if (kind == "constant" || kind == "variable") return definition;
     return base;
@@ -597,6 +610,17 @@ void check_element(const ryml::Tree& t, size_t node, const std::string& kind,
             continue;
         report(problems, t, node, "", "parameter", k, known);
     }
+    // Lists, not single names or dicts: a Lattice's `branches`
+    // (lattice-construction.md) and a UnionEle's `elements`.
+    const char* list_key = kind == "Lattice"    ? "branches"
+                           : kind == "UnionEle" ? "elements"
+                                                : nullptr;
+    if (list_key) {
+        size_t l = t.find_child(node, ryml::to_csubstr(list_key));
+        if (l != ryml::NONE && !t.is_seq(l))
+            add(problems, where(t, node, "") + "'" + list_key +
+                              "' must be a list");
+    }
 }
 
 void walk(const ryml::Tree& t, size_t node, const Extensions& ext,
@@ -722,10 +746,10 @@ void collect_names(const ryml::Tree& t, size_t node,
             for (size_t c = t.first_child(node); c != ryml::NONE;
                  c = t.next_sibling(c))
                 take(c);
-        } else if (k == "constants" || k == "variables") {
+        } else if ((k == "constants" || k == "variables") && t.is_seq(node)) {
             for (size_t e = t.first_child(node); e != ryml::NONE;
                  e = t.next_sibling(e))
-                take(t.has_key(e) ? e : t.first_child(e));
+                take(t.first_child(e));
         }
     }
     for (size_t c = t.first_child(node); c != ryml::NONE; c = t.next_sibling(c))

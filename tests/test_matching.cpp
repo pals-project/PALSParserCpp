@@ -73,31 +73,6 @@ TEST_CASE("a constant/variable pattern matches by name across forms",
     delete_tree(t);
 }
 
-TEST_CASE("compact constants written as a plain map are matched too",
-          "[matching]") {
-    // The compact form may be a YAML map (name: value) rather than a sequence
-    // of single-key maps; both must be matched.
-    YAMLTreeHandle t = parse_string(
-        "PALS:\n"
-        "  facility:\n"
-        "    - constants:\n"
-        "        a_const: 0.3 * r_electron\n"
-        "        b_const: 0.45\n"
-        "    - variables:\n"
-        "        a_var: 5\n");
-    struct name_matches m = match_names(t, ".*_const");
-    REQUIRE(m.count == 2);
-    REQUIRE(key_eq(t, m.nodes[0], "a_const"));
-    REQUIRE(key_eq(t, m.nodes[1], "b_const"));
-    free_name_matches(m);
-
-    m = match_names(t, "a_var");
-    REQUIRE(m.count == 1);
-    REQUIRE(val_eq(t, m.nodes[0], "5"));
-    free_name_matches(m);
-    delete_tree(t);
-}
-
 TEST_CASE("the name pattern is a whole-name (anchored) match", "[matching]") {
     YAMLTreeHandle t = parse_string(MATCH_YAML);
     // "a" alone must not match "a_const" — the whole name has to match.

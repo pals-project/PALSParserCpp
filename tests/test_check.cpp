@@ -658,3 +658,75 @@ TEST_CASE("an unset enumerated value is not reported", "[check][problems]") {
 
     REQUIRE(count_with(ps, "not one of its values") == 0);
 }
+
+TEST_CASE("the groups and components added to the standard are known",
+          "[check]") {
+    // FoilP's material and edge components (pals#437), MaterialP (pals#438),
+    // RFP's harmonic_number, and RFP on a CrabCavity.
+    auto ps = problems_for("PALS:\n"
+                           "  facility:\n"
+                           "    - f1:\n"
+                           "        kind: Foil\n"
+                           "        FoilP:\n"
+                           "          material: \"B4C\"\n"
+                           "          thickness: 1.0e-2\n"
+                           "          dthickness_dx: 0.1\n"
+                           "          density: [2.0e3, 1.0e3]\n"
+                           "          area_density: 0.2\n"
+                           "          radiation_length: [527, 427]\n"
+                           "          final_charge: 1\n"
+                           "          x_min: -0.01\n"
+                           "          x_max: 0.01\n"
+                           "          y_min: -0.01\n"
+                           "          y_max: 0.01\n"
+                           "    - m1:\n"
+                           "        kind: MaterialP\n"
+                           "        name: \"liquid_deuterium\"\n"
+                           "        state: LIQUID\n"
+                           "        density: 162.4\n"
+                           "        mean_excitation_energy: 19.2\n"
+                           "        components:\n"
+                           "          - material: \"#2H\"\n"
+                           "            atoms: 1\n"
+                           "    - c1:\n"
+                           "        kind: CrabCavity\n"
+                           "        RFP:\n"
+                           "          harmonic_number: 3\n"
+                           "          voltage: 1.0e6\n");
+    INFO(ps.size());
+    for (const auto& p : ps) INFO(p);
+    REQUIRE(!has(ps, "unknown parameter"));
+    REQUIRE(!has(ps, "not valid for kind"));
+    REQUIRE(!has(ps, "not one of"));
+}
+
+TEST_CASE("components the standard dropped are reported", "[check][problems]") {
+    // RFP's `harmon` is now `harmonic_number`; multipole groups have no
+    // `geometry`; MaterialP's state is an enum.
+    auto ps = problems_for("PALS:\n"
+                           "  facility:\n"
+                           "    - c1:\n"
+                           "        kind: RFCavity\n"
+                           "        RFP:\n"
+                           "          harmon: 3\n"
+                           "        MagneticMultipoleP:\n"
+                           "          geometry: VERTICALLY_PURE\n"
+                           "    - m1:\n"
+                           "        kind: MaterialP\n"
+                           "        state: SOLLID\n");
+    REQUIRE(has(ps, "'harmon'"));
+    REQUIRE(has(ps, "'geometry'"));
+    REQUIRE(has(ps, "SOLLID"));
+}
+
+TEST_CASE("a Lattice's branches must be a list", "[check][problems]") {
+    auto ps = problems_for("PALS:\n"
+                           "  facility:\n"
+                           "    - bline:\n"
+                           "        kind: BeamLine\n"
+                           "        line: []\n"
+                           "    - lat1:\n"
+                           "        kind: Lattice\n"
+                           "        branches: bline\n");
+    REQUIRE(has(ps, "'branches' must be a list"));
+}

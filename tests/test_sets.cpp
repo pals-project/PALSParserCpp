@@ -129,7 +129,7 @@ TEST_CASE("a set writes every element its pattern matches",
                       "          - Q1\n"
                       "    - set:\n"
                       "        parameter: B1.*>BendP.e1\n"
-                      "        value: 2*PARAMETER + atan(SELF.BendP.g_ref)\n",
+                      "        value: 2*PARAMETER + atan(SELF>BendP.g_ref)\n",
                       "main");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
@@ -499,7 +499,7 @@ TEST_CASE("a post_expansion set reaches each expanded copy",
                       "main",
                       "    - set:\n"
                       "        parameter: lat1>>>q1>MagneticMultipoleP.Kn1L\n"
-                      "        value: PARAMETER + SELF.s_position\n");
+                      "        value: PARAMETER + SELF>s_position\n");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
     REQUIRE(joined(lat) == "");

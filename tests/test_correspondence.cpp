@@ -93,7 +93,7 @@ TEST_CASE("build_correspondence_map connects a node across trees by value",
         "PALS:\n"
         "  facility:\n"
         "    - constants:\n"
-        "        a_const: 0.3 * r_electron\n"
+        "        - a_const: 0.3 * r_electron\n"
         "    - q1:\n"
         "        kind: Quadrupole\n"
         "        length: 1.0\n"
@@ -112,10 +112,10 @@ TEST_CASE("build_correspondence_map connects a node across trees by value",
         build_correspondence_map(lat.original, lat.combined, lat.full_expanded,
                                  lat.adjunct);
 
-    // Locate a_const in the adjunct tree: facility[0] -> constants -> a_const.
+    // Locate a_const in the adjunct tree: facility[0] -> constants[0] -> a_const.
     YAMLNodeId l_const = get_child_by_index(lat.adjunct, facility_of(lat.adjunct), 0);
     YAMLNodeId l_a_const =
-        get_child_by_key(lat.adjunct,
+        compact_def(lat.adjunct,
                          get_child_by_key(lat.adjunct, l_const, "constants"),
                          "a_const");
     REQUIRE(l_a_const != YAML_NULL_ID);

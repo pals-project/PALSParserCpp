@@ -89,6 +89,18 @@ inline YAMLNodeId facility_param(YAMLTreeHandle t, const char* entry) {
     return YAML_NULL_ID;
 }
 
+// The definition `name` in a compact `constants:`/`variables:` list (a sequence
+// of single-key maps).
+inline YAMLNodeId compact_def(YAMLTreeHandle t, YAMLNodeId list,
+                              const char* name) {
+    size_t n = get_size(t, list);
+    for (size_t i = 0; i < n; i++) {
+        YAMLNodeId c = get_child_by_key(t, get_child_by_index(t, list, i), name);
+        if (c != YAML_NULL_ID) return c;
+    }
+    return YAML_NULL_ID;
+}
+
 inline double num_val(YAMLTreeHandle t, YAMLNodeId n) {
     char* s = as_string(t, n);
     double v = s ? std::strtod(s, nullptr) : NAN;

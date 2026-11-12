@@ -187,11 +187,10 @@ class Parser {
       if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '>') {
         if (c == '>') dotted = true;
         ++pos_;
-      } else if (c == '.' &&
-                 (dotted || s_.compare(start, pos_ - start, "SELF") == 0)) {
+      } else if (c == '.' && dotted) {
         // A `.` is part of the identifier only in a parameter path: after the
-        // `>` of an element-parameter reference, or after the `SELF` of a `set`
-        // value expression (`SELF.BendP.g_ref`), where it separates the
+        // `>` of an element-parameter reference (`Q1>MagneticMultipoleP.Kn1`,
+        // or `SELF>BendP.g_ref` in a `set` value), where it separates the
         // parameter group from the parameter. Elsewhere `.` begins a number and
         // is not an identifier character.
         dotted = true;
@@ -313,6 +312,10 @@ class Parser {
   }
 
   double call(const std::string& fn) {
+    // A wrapper that got this far does not enclose the whole expression
+    // (`2 * expr(a + b)`), which s:expressions does not allow.
+    if (fn == "expr")
+      throw ParseError{"expr(...) must enclose the entire expression"};
     // Particle-data functions take a species name (quoted literal or a symbol
     // that resolves to one), not a numeric expression.
     if (fn == "mass_of" || fn == "charge_of" || fn == "anomalous_moment_of") {
@@ -428,6 +431,8 @@ bool builtin_constant(const std::string& name, double& out) {
   }
   if (name == "fine_structure") { out = apc::FINE_STRUCTURE; return true; }
   if (name == "n_avogadro") { out = apc::AVOGADRO; return true; }
+  if (name == "degrees") { out = kPi / 180; return true; }
+  if (name == "amu") { out = apc::EV_PER_AMU; return true; }  // eV/c^2
   return false;
 }
 

@@ -160,6 +160,26 @@ static void duplicate_children_no_rep_tracked(ryml::Tree& t, size_t src,
     }
 }
 
+// Like duplicate_children_no_rep_tracked, but a map present on both sides is
+// merged key by key rather than kept whole, so an instance that sets one
+// parameter of a group (`SolenoidP: {Ksol: 0.3}`) keeps the group's others.
+// The keys brought in go ahead of the receiver's own, in the source's order.
+static void merge_children_no_rep_tracked(ryml::Tree& t, size_t src, size_t dst,
+                                          std::map<size_t, size_t>& prov) {
+    size_t after = ryml::NONE;
+    for (size_t c = t.first_child(src); c != ryml::NONE;
+         c = t.next_sibling(c)) {
+        if (!t.has_key(c)) continue;
+        size_t have = t.find_child(dst, t.key(c));
+        if (have == ryml::NONE) {
+            ensure_capacity(t, 2);
+            after = duplicate_tracked(t, c, dst, after, prov);
+        } else if (t.is_map(have) && t.is_map(c)) {
+            merge_children_no_rep_tracked(t, c, have, prov);
+        }
+    }
+}
+
 // Build a name->node map for all elements that have a "kind" key.
 static void make_ele_map(std::map<std::string, size_t>& emap,
                          const ryml::Tree& t, size_t node) {
@@ -182,6 +202,33 @@ static void make_ele_map(std::map<std::string, size_t>& emap,
         make_ele_map(emap, t, c);
 }
 
+// The node an `inherit` names (lattice-element-parameters.md, s:inherit.params;
+// lattice-elements.md): an element or a named parameter group (`ap1`), or a
+// parameter group of an element (`q1>ApertureP`). ryml::NONE if not defined.
+static size_t inherit_source(const ryml::Tree& t,
+                             const std::map<std::string, size_t>& emap,
+                             const std::string& name) {
+    size_t gt = name.find('>');
+    auto it = emap.find(gt == std::string::npos ? name : name.substr(0, gt));
+    if (it == emap.end()) return ryml::NONE;
+    if (gt == std::string::npos) return it->second;
+    std::vector<std::string> path;
+    std::string rest = name.substr(gt + 1);
+    for (size_t a = 0;;) {
+        size_t d = rest.find('.', a);
+        path.push_back(rest.substr(a, d == std::string::npos ? d : d - a));
+        if (d == std::string::npos) break;
+        a = d + 1;
+    }
+    size_t n = it->second;
+    for (const std::string& k : path) {
+        if (k.empty() || !t.is_map(n)) return ryml::NONE;
+        n = t.find_child(n, ryml::to_csubstr(k));
+        if (n == ryml::NONE) return ryml::NONE;
+    }
+    return t.is_map(n) ? n : ryml::NONE;
+}
+
 // The problems found while building the expanded tree (undefined lattice,
 // dangling references, undefined inherit/repeat/fork targets, un-evaluable
 // expressions, ...), returned to the caller so it can decide whether to print,
@@ -200,6 +247,12 @@ static std::string short_location(const ryml::Tree& t, size_t node) {
     std::string key =
         t.has_key(node) ? std::string(t.key(node).str, t.key(node).len) : "";
     size_t p = t.parent(node);
+    // An entry of a list of single-key maps (`constants: [- a: ...]`) is
+    // located by the list it sits in.
+    if (p != ryml::NONE && !t.has_key(p) && t.is_map(p)) {
+        size_t gp = t.parent(p);
+        if (gp != ryml::NONE && t.is_seq(gp) && t.has_key(gp)) p = gp;
+    }
     std::string pk = (p != ryml::NONE && t.has_key(p))
                          ? std::string(t.key(p).str, t.key(p).len)
                          : "";
@@ -589,10 +642,11 @@ static void expand(ryml::Tree& t, size_t node,
         size_t inherit_id = t.find_child(node, ryml::to_csubstr("inherit"));
         if (inherit_id != ryml::NONE) {
             std::string name(t.val(inherit_id).str, t.val(inherit_id).len);
-            if (emap.count(name)) {
-                ensure_capacity(t, t.num_children(emap[name]) + 1);
-                duplicate_children_no_rep_tracked(t, emap[name], node,
-                                                  ryml::NONE, prov);
+            size_t src = inherit_source(t, emap, name);
+            if (src != ryml::NONE) {
+                ensure_capacity(t, t.num_children(src) + 1);
+                duplicate_children_no_rep_tracked(t, src, node, ryml::NONE,
+                                                  prov);
             } else {
                 add_problem(problems,
                             "inherit: '" + name + "' is not defined");
@@ -1773,9 +1827,9 @@ static void collect_defs(
         }
     }
 
-    // Compact form: a `constants:`/`variables:` block. The standard writes it
-    // as a sequence of single-key maps (`- const_a: ...`), but the plain-map
-    // form (`const_a: ...` directly under the key) is also accepted.
+    // Compact form: a `constants:`/`variables:` list of single-key maps
+    // (`- const_a: ...`). A plain map under the key is not the compact form;
+    // check_definitions reports it.
     if (t.has_key(node)) {
         std::string k(t.key(node).str, t.key(node).len);
         if (k == "constants" || k == "variables") {
@@ -1786,11 +1840,7 @@ static void collect_defs(
                 defs.emplace(name, text);
                 if (all) all->emplace_back(name, text);
             };
-            if (t.is_map(node)) {
-                for (size_t kv = t.first_child(node); kv != ryml::NONE;
-                     kv = t.next_sibling(kv))
-                    emit(kv);
-            } else if (t.is_seq(node)) {
+            if (t.is_seq(node)) {
                 for (size_t el = t.first_child(node); el != ryml::NONE;
                      el = t.next_sibling(el)) {
                     if (!t.is_map(el)) continue;
@@ -1827,10 +1877,35 @@ static bool looks_like_expression(const std::string& body, bool was_expr) {
 // against a scope of their own, by evaluate_controllers and execute_set.
 // A value that looks like an expression but cannot be evaluated is recorded in
 // `problems`.
+// A delayed (`expr(...)`) value substitute_values replaced with a number: the
+// node, its key, the text it held, and the number written over it. Kept so the
+// delayed expressions can be evaluated again once `post_expansion` has run
+// (s:lattice.expand: "Evaluate the delayed expressions"). The key and number
+// are what tell, later, that the node still holds this value and was neither
+// removed nor written since.
+struct DelayedValue {
+    size_t node = ryml::NONE;
+    std::string key;
+    std::string text;     // the `expr(...)` source
+    std::string written;  // the number substitute_values wrote
+};
+
+// How substitute_values treats a subtree.
+struct SubstituteMode {
+    // Evaluate only immediate expressions, leaving `expr(...)` values as text,
+    // and keep quiet about what does not evaluate: the `facility` pass, which
+    // evaluates what it can in list order and leaves the rest to the pass after
+    // expansion.
+    bool immediate_only = false;
+    // Where to record the delayed values replaced, if anywhere.
+    std::vector<DelayedValue>* delayed = nullptr;
+};
+
 static void substitute_values(ryml::Tree& t, size_t node,
                               const pals::SymbolLookup& resolve,
                               const pals::SpeciesLookup& species,
-                              ProblemList& problems) {
+                              ProblemList& problems,
+                              const SubstituteMode& mode = SubstituteMode()) {
     if (node == ryml::NONE || is_controller(t, node) || is_set_node(t, node))
         return;
 
@@ -1850,15 +1925,23 @@ static void substitute_values(ryml::Tree& t, size_t node,
                 skip = pk == "line" || non_expr_keys().count(pk) != 0;
             }
         }
-        if (!skip) {
-            bool was_expr = false;
-            std::string body = strip_expr_wrapper(
-                std::string(t.val(node).str, t.val(node).len), was_expr);
+        bool was_expr = false;
+        std::string text = skip ? std::string()
+                                : std::string(t.val(node).str, t.val(node).len);
+        std::string body = skip ? std::string() : strip_expr_wrapper(text, was_expr);
+        if (!skip && !(was_expr && mode.immediate_only)) {
             pals::EvalOutcome r = pals::eval_expression(body, resolve, species);
             std::string sp;
             if (r.ok) {
-                t.set_val(node,
-                          t.to_arena(ryml::to_csubstr(format_double(r.value))));
+                std::string num = format_double(r.value);
+                t.set_val(node, t.to_arena(ryml::to_csubstr(num)));
+                if (was_expr && mode.delayed && t.has_key(node))
+                    mode.delayed->push_back(
+                        {node, std::string(t.key(node).str, t.key(node).len),
+                         text, num});
+            } else if (mode.immediate_only) {
+                // Not evaluable yet -- it may need what expansion computes.
+                // The pass after expansion evaluates it, or reports it.
             } else if (!r.deferred && species && species(body, sp)) {
                 // A bare identifier that names a species-valued constant or
                 // variable (e.g. `species_ref: species` with `species: "#3He"`)
@@ -1879,7 +1962,7 @@ static void substitute_values(ryml::Tree& t, size_t node,
 
     for (size_t c = t.first_child(node); c != ryml::NONE;
          c = t.next_sibling(c))
-        substitute_values(t, c, resolve, species, problems);
+        substitute_values(t, c, resolve, species, problems, mode);
 }
 
 // Collects every `kind: Controller` node in the subtree.
@@ -2000,20 +2083,6 @@ static void collect_controller_defs(ryml::Tree& t, std::vector<Ctrl>& ctrls,
     std::vector<size_t> nodes;
     collect_controllers(t, t.root_id(), nodes);
 
-    // Neither an initial value nor a control expression may reach outside its
-    // own controller (parameter-values-and-controllers.md, s:controller). Every such reference --
-    // a lattice parameter, another controller's variable -- is spelled with
-    // `>`, so one test covers both, and it is what keeps evaluation order
-    // decidable from the `controls` hierarchy alone.
-    auto reject_refs = [&problems](const std::string& what,
-                                   const std::string& text) {
-        if (text.find('>') == std::string::npos) return false;
-        add_problem(problems,
-                    what + " may not reference a lattice parameter or another "
-                           "controller's variable: " + text);
-        return true;
-    };
-
     for (size_t node : nodes) {
         Ctrl c;
         c.node = node;
@@ -2038,32 +2107,20 @@ static void collect_controller_defs(ryml::Tree& t, std::vector<Ctrl>& ctrls,
             v.ctrl = ctrls.size();
             v.name = vname;
             v.text = scalar_text(t, vn);
-            if (reject_refs("controller '" + c.name + "' variable '" + vname +
-                                "'",
-                            v.text))
+            // An initial value is an immediate expression (s:controller), so
+            // an `expr(...)` wrapper on it is an error.
+            bool was_expr = false;
+            strip_expr_wrapper(v.text, was_expr);
+            if (was_expr) {
+                add_problem(problems,
+                            "controller '" + c.name + "' variable '" + vname +
+                                "': an initial value may not be wrapped in "
+                                "expr(...)");
                 v.text.clear();
+            }
             c.vars.push_back(vars.size());
             vars.push_back(std::move(v));
         });
-
-        // An initial value may not name a variable at all, not even one of this
-        // controller's own: it is a constant expression, so no variable has to
-        // be evaluated before any other. Only the control `expression`s use the
-        // variables. Checked here, once every name of this controller is known,
-        // so it does not matter which order the variables are written in.
-        std::set<std::string> vnames;
-        for (size_t vi : c.vars) vnames.insert(vars[vi].name);
-        for (size_t vi : c.vars) {
-            for (const std::string& id : expression_identifiers(vars[vi].text)) {
-                if (!vnames.count(id)) continue;
-                add_problem(problems, "controller '" + c.name + "' variable '" +
-                                          vars[vi].name +
-                                          "': an initial value may not "
-                                          "reference the variable '" + id + "'");
-                vars[vi].text.clear();
-                break;
-            }
-        }
 
         size_t controls = t.find_child(node, ryml::to_csubstr("controls"));
         if (controls != ryml::NONE) {
@@ -2087,9 +2144,6 @@ static void collect_controller_defs(ryml::Tree& t, std::vector<Ctrl>& ctrls,
                                     cc.param + "' has no `expression`");
                     continue;
                 }
-                if (reject_refs("controller '" + c.name + "' control expression",
-                                cc.text))
-                    continue;
                 c.controls.push_back(std::move(cc));
             }
         }
@@ -2104,16 +2158,39 @@ static void collect_controller_defs(ryml::Tree& t, std::vector<Ctrl>& ctrls,
 // file is written. A cycle is a file error: it is reported, and the controllers
 // caught in it are appended in file order so evaluation still produces
 // something for everything outside the cycle.
+// True if expression `text` reads a variable of the controller `ctrl`, which it
+// spells `{ctrl}>{variable}` (s:controller).
+static bool reads_controller(const std::string& text, const std::string& ctrl) {
+    if (ctrl.empty()) return false;
+    const std::string pat = ctrl + ">";
+    for (size_t at = text.find(pat); at != std::string::npos;
+         at = text.find(pat, at + 1)) {
+        char before = at == 0 ? ' ' : text[at - 1];
+        if (std::isalnum(static_cast<unsigned char>(before)) || before == '_' ||
+            before == '>')
+            continue;
+        return true;
+    }
+    return false;
+}
+
 static std::vector<size_t> controller_order(const std::vector<Ctrl>& ctrls,
                                             ProblemList& problems) {
     std::vector<std::vector<size_t>> below(ctrls.size());
     std::vector<size_t> indeg(ctrls.size(), 0);
+    auto edge = [&](size_t from, size_t to) {
+        below[from].push_back(to);
+        ++indeg[to];
+    };
     for (size_t ci = 0; ci < ctrls.size(); ++ci)
-        for (const CtrlControl& c : ctrls[ci].controls)
-            if (c.target_ctrl != SIZE_MAX) {
-                below[ci].push_back(c.target_ctrl);
-                ++indeg[c.target_ctrl];
-            }
+        for (const CtrlControl& c : ctrls[ci].controls) {
+            if (c.target_ctrl != SIZE_MAX) edge(ci, c.target_ctrl);
+            // A control expression reading another controller's variable needs
+            // that controller -- and whatever drives it -- evaluated first.
+            for (size_t cj = 0; cj < ctrls.size(); ++cj)
+                if (cj != ci && reads_controller(c.text, ctrls[cj].name))
+                    edge(cj, ci);
+        }
 
     std::vector<size_t> order;
     std::vector<bool> queued(ctrls.size(), false);
@@ -2160,9 +2237,9 @@ struct CtrlTarget {
 
 // Evaluates the controllers and applies them to the expanded lattice.
 //
-// Each controller's `variables` are a symbol table scoped to that controller:
-// an initial value may use the controller's own variables, the built-in and
-// user constants, and nothing else. A variable written with no value is zero.
+// Each controller's `variables` are a symbol table scoped to that controller.
+// An initial value is an immediate expression and may use any variable,
+// constant or lattice parameter; a variable written with no value is zero.
 // Controllers are walked from the top of the hierarchy downwards, so a variable
 // driven from above already holds its driving value by the time the controller
 // owning it is evaluated. Every control `expression` is then computed with its
@@ -2177,7 +2254,8 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
                                  const pals::SymbolLookup& global_resolve,
                                  const pals::SpeciesLookup& species,
                                  std::map<size_t, size_t>& prov,
-                                 ProblemList& problems) {
+                                 ProblemList& problems,
+                                 std::vector<DelayedValue>* delayed) {
     std::vector<Ctrl> ctrls;
     std::vector<CtrlVar> vars;
     collect_controller_defs(t, ctrls, vars, problems);
@@ -2215,16 +2293,82 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
 
     std::vector<size_t> order = controller_order(ctrls, problems);
 
-    // Symbol tables, filled in as each controller is reached.
+    // The variable `name` as seen from controller `ci`: one of its own
+    // (`cur1`), or another controller's (`ps27>cur1`). SIZE_MAX if neither.
+    auto var_named = [&](size_t ci, const std::string& name) -> size_t {
+        size_t gt = name.find('>');
+        if (gt == std::string::npos) {
+            auto it = var_of.find({ci, name});
+            return it == var_of.end() ? SIZE_MAX : it->second;
+        }
+        auto ct = by_name.find(name.substr(0, gt));
+        if (ct == by_name.end()) return SIZE_MAX;
+        auto it = var_of.find({ct->second, name.substr(gt + 1)});
+        return it == var_of.end() ? SIZE_MAX : it->second;
+    };
+
+    // Initial values are immediate expressions (s:controller): each is
+    // evaluated once, and may use constants, variables -- this controller's or
+    // another's, by their initial values -- and lattice parameters. Evaluated
+    // on demand, so the order the variables are written in does not matter;
+    // a circular set of initial values does not evaluate.
+    std::map<size_t, pals::EvalOutcome> init_memo;
+    std::set<size_t> init_active;
+    std::function<pals::EvalOutcome(size_t)> init_value =
+        [&](size_t vi) -> pals::EvalOutcome {
+        auto m = init_memo.find(vi);
+        if (m != init_memo.end()) return m->second;
+        pals::EvalOutcome r;
+        if (vars[vi].text.empty()) {  // no value given: the default is zero
+            r.ok = true;
+            r.value = 0.0;
+            return init_memo[vi] = r;
+        }
+        if (!init_active.insert(vi).second) {
+            r.error = "circular initial values";
+            return r;
+        }
+        size_t ci = vars[vi].ctrl;
+        pals::SymbolLookup lookup = [&, ci](const std::string& name,
+                                            double& out) -> bool {
+            size_t vj = var_named(ci, name);
+            if (vj != SIZE_MAX) {
+                pals::EvalOutcome o = init_value(vj);
+                if (!o.ok) return false;
+                out = o.value;
+                return true;
+            }
+            return global_resolve ? global_resolve(name, out) : false;
+        };
+        bool was_expr = false;
+        std::string body = strip_expr_wrapper(vars[vi].text, was_expr);
+        r = pals::eval_expression(body, lookup, species);
+        init_active.erase(vi);
+        return init_memo[vi] = r;
+    };
+
+    // Symbol tables, filled in as each controller is reached. A control
+    // expression sees its own controller's variables, the variables of the
+    // controllers evaluated before it (`ps27>cur1`), and everything global.
     std::vector<std::map<std::string, double>> locals(ctrls.size());
-    auto resolver_for = [&locals, &global_resolve](size_t ci) {
+    auto resolver_for = [&](size_t ci) {
         return pals::SymbolLookup(
-            [ci, &locals, &global_resolve](const std::string& name,
-                                           double& out) -> bool {
+            [ci, &locals, &global_resolve, &by_name](const std::string& name,
+                                                     double& out) -> bool {
                 auto it = locals[ci].find(name);
                 if (it != locals[ci].end()) {
                     out = it->second;
                     return true;
+                }
+                size_t gt = name.find('>');
+                if (gt != std::string::npos) {
+                    auto ct = by_name.find(name.substr(0, gt));
+                    if (ct != by_name.end()) {
+                        auto v = locals[ct->second].find(name.substr(gt + 1));
+                        if (v == locals[ct->second].end()) return false;
+                        out = v->second;
+                        return true;
+                    }
                 }
                 return global_resolve ? global_resolve(name, out) : false;
             });
@@ -2238,9 +2382,7 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
 
         // Build this controller's symbol table. A driven variable takes the
         // value the controllers above set -- that is what it replaced its own
-        // initial value with. Every other initial value is a constant
-        // expression (no variable may appear in one), so a single pass in any
-        // order settles the table.
+        // initial value with. Every other one takes its initial value.
         for (size_t vi : c.vars) {
             CtrlVar& v = vars[vi];
             if (v.driven) {
@@ -2249,18 +2391,7 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
                 v.done = true;
                 continue;
             }
-            if (v.text.empty()) {  // no value given: the default is zero
-                locals[ci][v.name] = 0.0;
-                set_scalar_num(t, v.node, 0.0);
-                v.done = true;
-                continue;
-            }
-            bool was_expr = false;
-            std::string body = strip_expr_wrapper(v.text, was_expr);
-            // `global_resolve`, not `res`: an initial value sees the built-in
-            // and user constants, never the variables.
-            pals::EvalOutcome r =
-                pals::eval_expression(body, global_resolve, species);
+            pals::EvalOutcome r = init_value(vi);
             if (r.ok) {
                 locals[ci][v.name] = r.value;
                 set_scalar_num(t, v.node, r.value);
@@ -2289,6 +2420,11 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
                 cc.ok = true;
                 cc.value = r.value;
                 set_scalar_num(t, cc.expr_node, r.value);
+                // Control expressions are delayed (s:controller): kept so they
+                // are evaluated again after `post_expansion`.
+                if (delayed)
+                    delayed->push_back({cc.expr_node, "expression", cc.text,
+                                        format_double(r.value)});
             } else if (!r.deferred) {
                 std::string msg = "controller '" + c.name +
                                   "' control expression could not be "
@@ -2454,13 +2590,17 @@ static size_t resolve_ele_param_ref(const ryml::Tree& t,
 // against a tree the previous ones have written to.
 static void make_expression_context(const ryml::Tree& t,
                                     pals::SymbolLookup& resolve_out,
-                                    pals::SpeciesLookup& species_out) {
+                                    pals::SpeciesLookup& species_out,
+                                    size_t lat_node = ryml::NONE) {
     auto defs = std::make_shared<std::map<std::string, std::string>>();
     collect_defs(t, t.root_id(), *defs);
 
     // Element name -> definition map, so expressions may reference another
-    // element's parameter via `element>group. ... .param`.
+    // element's parameter via `element>group. ... .param`. Once the lattice is
+    // expanded an unqualified name means an element of it (names.md), so its
+    // elements are entered first and win over the facility definitions.
     auto emap = std::make_shared<std::map<std::string, size_t>>();
+    if (lat_node != ryml::NONE) make_ele_map(*emap, t, lat_node);
     make_ele_map(*emap, t, t.root_id());
 
     // Resolves a symbol whose value is a species-name string (e.g.
@@ -2529,7 +2669,113 @@ static void make_expression_context(const ryml::Tree& t,
 // s:constants): a name defined more than once must be given the same value
 // each time, and no definition may depend on itself, directly or through
 // others.
+// Where a definition may stand and what it may be defined with
+// (s:constants): directly under the `facility` or `post_expansion` list, the
+// compact form as a list, and a constant never with a delayed expression.
+static void check_definition_form(const ryml::Tree& t, size_t node,
+                                  ProblemList& problems) {
+    if (node == ryml::NONE || is_controller(t, node)) return;
+    auto list_key = [&](size_t n) -> std::string {
+        // `n` is the content of a list entry: entry map -> sequence -> key.
+        size_t entry = t.parent(n);
+        if (entry == ryml::NONE || t.has_key(entry)) return "";
+        size_t seq = t.parent(entry);
+        if (seq == ryml::NONE || !t.is_seq(seq) || !t.has_key(seq)) return "";
+        return std::string(t.key(seq).str, t.key(seq).len);
+    };
+    auto placed = [&](size_t n, const std::string& what) {
+        std::string lk = list_key(n);
+        if (lk == "facility" || lk == "post_expansion") return;
+        add_problem(problems,
+                    what + " must be defined directly under the `facility` or "
+                    "`post_expansion` list", what);
+    };
+    auto delayed_constant = [&](const std::string& name,
+                                const std::string& text) {
+        bool was_expr = false;
+        strip_expr_wrapper(text, was_expr);
+        if (was_expr)
+            add_problem(problems,
+                        "constant '" + name + "' is defined with a delayed "
+                        "expression; only a variable may be", name);
+    };
+
+    if (t.has_key(node)) {
+        std::string k(t.key(node).str, t.key(node).len);
+        if (k == "constants" || k == "variables") {
+            placed(node, "`" + k + "`");
+            if (!t.is_seq(node)) {
+                add_problem(problems,
+                            "`" + k + "` must be a list of `name: value` "
+                            "entries", k);
+            } else if (k == "constants") {
+                for (size_t el = t.first_child(node); el != ryml::NONE;
+                     el = t.next_sibling(el))
+                    for (size_t kv = t.first_child(el); kv != ryml::NONE;
+                         kv = t.next_sibling(kv))
+                        if (t.has_key(kv) && t.has_val(kv))
+                            delayed_constant(
+                                std::string(t.key(kv).str, t.key(kv).len),
+                                std::string(t.val(kv).str, t.val(kv).len));
+            }
+            return;
+        }
+        if (t.is_map(node)) {
+            std::string kind = child_val_str(t, node, "kind");
+            if (kind == "constant" || kind == "variable") {
+                placed(node, kind + " '" + k + "'");
+                if (kind == "constant")
+                    delayed_constant(k, child_val_str(t, node, "value"));
+                return;
+            }
+        }
+    }
+    for (size_t c = t.first_child(node); c != ryml::NONE; c = t.next_sibling(c))
+        check_definition_form(t, c, problems);
+}
+
+// Nothing in the `facility` list may reference what the `post_expansion` list
+// defines (s:lattice.expand): its constants, variables and controllers.
+static void check_facility_references(const ryml::Tree& t,
+                                      ProblemList& problems) {
+    size_t pals = t.find_child(t.root_id(), ryml::to_csubstr("PALS"));
+    if (pals == ryml::NONE) return;
+    size_t post = t.find_child(pals, ryml::to_csubstr("post_expansion"));
+    size_t fac = t.find_child(pals, ryml::to_csubstr("facility"));
+    if (post == ryml::NONE || fac == ryml::NONE) return;
+
+    std::map<std::string, std::string> post_defs;
+    collect_defs(t, post, post_defs);
+    std::set<std::string> names;
+    for (const auto& d : post_defs) names.insert(d.first);
+    for (size_t e = t.first_child(post); e != ryml::NONE; e = t.next_sibling(e)) {
+        size_t c = t.first_child(e);
+        if (c != ryml::NONE && t.has_key(c) && is_controller(t, c))
+            names.insert(std::string(t.key(c).str, t.key(c).len));
+    }
+    if (names.empty()) return;
+
+    std::set<std::string> said;
+    std::function<void(size_t)> walk = [&](size_t n) {
+        if (t.has_val(n)) {
+            std::string v(t.val(n).str, t.val(n).len);
+            for (const std::string& id : expression_identifiers(v))
+                if (names.count(id) && said.insert(id).second)
+                    add_problem(problems,
+                                "'" + id + "' is defined in `post_expansion` "
+                                "and may not be referenced from `facility`",
+                                id);
+        }
+        for (size_t c = t.first_child(n); c != ryml::NONE; c = t.next_sibling(c))
+            walk(c);
+    };
+    walk(fac);
+}
+
 static void check_definitions(const ryml::Tree& t, ProblemList& problems) {
+    check_definition_form(t, t.root_id(), problems);
+    check_facility_references(t, problems);
+
     std::map<std::string, std::string> defs;
     std::vector<std::pair<std::string, std::string>> all;
     collect_defs(t, t.root_id(), defs, &all);
@@ -2592,13 +2838,69 @@ static void check_definitions(const ryml::Tree& t, ProblemList& problems) {
 // evaluated in `problems`.
 static void evaluate_expressions(ryml::Tree& t, size_t lat_node,
                                  std::map<size_t, size_t>& prov,
-                                 ProblemList& problems) {
+                                 ProblemList& problems,
+                                 std::vector<DelayedValue>* delayed = nullptr) {
     pals::SymbolLookup resolve;
     pals::SpeciesLookup species;
-    make_expression_context(t, resolve, species);
+    make_expression_context(t, resolve, species, lat_node);
 
-    evaluate_controllers(t, lat_node, resolve, species, prov, problems);
-    substitute_values(t, t.root_id(), resolve, species, problems);
+    evaluate_controllers(t, lat_node, resolve, species, prov, problems,
+                         delayed);
+    SubstituteMode mode;
+    mode.delayed = delayed;
+    substitute_values(t, t.root_id(), resolve, species, problems, mode);
+}
+
+// Put back the `expr(...)` text of the delayed values the first evaluation
+// replaced, so the next one evaluates them against the lattice as it now stands
+// (after `post_expansion`). A value no longer holding the number written over
+// it -- removed, or replaced by a `set` -- is left alone: a set replaces a
+// delayed expression like any other value (s:set).
+// Returns the values put back.
+static std::vector<DelayedValue> restore_delayed(
+    ryml::Tree& t, const std::vector<DelayedValue>& d,
+    const std::set<size_t>& written) {
+    std::vector<DelayedValue> back;
+    for (const DelayedValue& v : d) {
+        if (written.count(v.node)) continue;
+        if (v.node >= t.capacity() || !t.has_key(v.node) || !t.has_val(v.node))
+            continue;
+        if (std::string(t.key(v.node).str, t.key(v.node).len) != v.key ||
+            std::string(t.val(v.node).str, t.val(v.node).len) != v.written)
+            continue;
+        t.set_val(v.node, t.to_arena(ryml::to_csubstr(v.text)));
+        back.push_back(v);
+    }
+    return back;
+}
+
+// A parameter group key: CamelCase ending in `P` (lattice-element-parameters.md).
+static bool looks_like_group_name(const std::string& k) {
+    return k.size() >= 2 && k.back() == 'P' && k[0] >= 'A' && k[0] <= 'Z';
+}
+
+// A delayed element parameter that came out different the second time is a new
+// statement of its quantity, as a `set` would be: the family members the first
+// bookkeeper pass derived from the old value are dropped, to be derived again.
+static void refresh_changed_delayed(ryml::Tree& t,
+                                    const std::vector<DelayedValue>& back,
+                                    std::map<size_t, size_t>& prov) {
+    for (const DelayedValue& v : back) {
+        if (!t.has_val(v.node) ||
+            std::string(t.val(v.node).str, t.val(v.node).len) == v.written)
+            continue;
+        size_t p = t.parent(v.node);
+        if (p == ryml::NONE || !t.has_key(p)) continue;
+        std::vector<std::string> path{v.key};
+        size_t ele = p;
+        std::string pk(t.key(p).str, t.key(p).len);
+        if (looks_like_group_name(pk)) {
+            path.insert(path.begin(), pk);
+            ele = t.parent(p);
+        }
+        if (ele == ryml::NONE || !t.has_key(ele)) continue;
+        nullify_family(t, ele, path, prov);
+    }
 }
 
 // ============================================================
@@ -2671,7 +2973,7 @@ static bool get_str_child(const ryml::Tree& t, size_t parent, const char* key,
 //
 //   - set:
 //       parameter: B1.*>BendP.e1
-//       value: 2*PARAMETER + atan(SELF.BendP.g_ref)
+//       value: 2*PARAMETER + atan(SELF>BendP.g_ref)
 //
 // In the `value` expression `PARAMETER` stands for the current value of the
 // parameter being written and `SELF` for the element that owns it. The compact
@@ -2849,6 +3151,33 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
                         "the error distribution",
                     cmd.param, Severity::Warning, Origin::Unspecified);
 
+    // A delayed value (s:set) is written as the expression itself, so it is
+    // evaluated with the other delayed expressions. It may not use
+    // `PARAMETER`: the parameter would then be defined by itself, an endless
+    // evaluation loop. `SELF` names the element the set is acting on, which a
+    // stored expression has no way to spell, so such a value is evaluated now.
+    bool was_delayed = false;
+    std::string delayed_body = strip_expr_wrapper(cmd.value, was_delayed);
+    if (was_delayed) {
+        bool uses_self = false;
+        for (const std::string& id : expression_identifiers(delayed_body)) {
+            if (id == "PARAMETER") {
+                add_problem(problems,
+                            what + ": a delayed value may not use PARAMETER "
+                                   "(the parameter would be defined by itself)");
+                return;
+            }
+            if (id == "SELF") uses_self = true;
+        }
+        if (uses_self) {
+            add_problem(problems,
+                        what + ": a delayed value using SELF is evaluated once, "
+                               "as an immediate expression",
+                        cmd.param, Severity::Warning, Origin::Unspecified);
+            was_delayed = false;
+        }
+    }
+
     // Only a pre-expansion set needs the element map, to spot a reference to a
     // parameter whose value has still to be derived.
     std::map<std::string, size_t> emap;
@@ -2860,7 +3189,7 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
         std::string ename(t.key(ele).str, t.key(ele).len);
         std::string where = what + " on '" + ename + "'";
 
-        // `PARAMETER` is the value being replaced; `SELF.<path>` reaches the
+        // `PARAMETER` is the value being replaced; `SELF>path` reaches the
         // rest of the element. Both are scoped to this one element, so the
         // resolver is rebuilt for each.
         bool pending = false;
@@ -2877,7 +3206,7 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
                 }
                 return ok;
             }
-            if (name.compare(0, 5, "SELF.") == 0) {
+            if (name.compare(0, 5, "SELF>") == 0) {
                 std::vector<std::string> path = split_dots(name.substr(5));
                 bool p = false;
                 bool ok =
@@ -2930,7 +3259,11 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
         size_t parent = ele;
         for (size_t i = 0; i + 1 < tg.path.size(); ++i)
             parent = find_or_add_map_child(t, parent, tg.path[i].c_str());
-        set_num_child(t, parent, tg.key.c_str(), r.value);
+        if (was_delayed)
+            set_plain_child(t, parent, tg.key.c_str(),
+                            ("expr(" + delayed_body + ")").c_str());
+        else
+            set_num_child(t, parent, tg.key.c_str(), r.value);
         if (written) written->push_back(tg);
         // This write nullifies the previous settings of the rest of the family:
         // whatever the definition stated before expansion, and -- after it --
@@ -3005,36 +3338,129 @@ static std::vector<SetCommand> entry_set_commands(const ryml::Tree& t,
     return out;
 }
 
-// Run the `set` commands of the `facility` list, in list order. Each acts on the
-// element definitions that precede it, which is why the entries are walked
-// rather than the tree: `Q2` defined after a set is not touched by it.
-static void run_pre_expansion_sets(ryml::Tree& t,
-                                   const std::vector<size_t>& entries,
-                                   std::map<size_t, size_t>& prov,
-                                   ProblemList& problems) {
-    std::vector<std::vector<SetCommand>> cmds(entries.size());
-    bool any = false;
-    for (size_t i = 0; i < entries.size(); ++i) {
-        cmds[i] = entry_set_commands(t, entries[i], problems);
-        if (!cmds[i].empty()) any = true;
-    }
-    if (!any) return;  // the usual case: no sets at all
+// Resolve the `inherit`s of the facility definition `def` -- the element's own
+// and those of its parameter groups -- against the definitions made before it.
+// Inheritance is immediate (lattice-elements.md): the values are copied into
+// `def` now, so a `set` further down the list acting on the element inherited
+// from does not reach `def`, and the `inherit` is spent -- removed, so expansion
+// does not copy again. An inherit naming something defined only later in the
+// list is an error; one naming nothing at all is left for expand to report.
+static void resolve_definition_inherits(
+    ryml::Tree& t, size_t def, const std::map<std::string, size_t>& before,
+    const std::map<std::string, size_t>& everything,
+    std::map<size_t, size_t>& prov, ProblemList& problems) {
+    auto is_line = [&](size_t n) {
+        return n != ryml::NONE && !child_val_str(t, n, "kind").empty() &&
+               (child_val_str(t, n, "kind") == "BeamLine" ||
+                child_val_str(t, n, "kind") == "Lattice");
+    };
+    auto resolve = [&](size_t node, const std::string& where) {
+        size_t inh = t.find_child(node, ryml::to_csubstr("inherit"));
+        if (inh == ryml::NONE || !t.has_val(inh)) return;
+        std::string name(t.val(inh).str, t.val(inh).len);
+        size_t src = inherit_source(t, before, name);
+        if (src != ryml::NONE && is_line(src)) return;  // a line: expansion's
+        if (src == ryml::NONE) {
+            if (inherit_source(t, everything, name) != ryml::NONE)
+                add_problem(problems, where + ": inherit: '" + name +
+                                          "' must be defined before it");
+            return;
+        }
+        ensure_capacity(t, t.num_children(src) + 1);
+        merge_children_no_rep_tracked(t, src, node, prov);
+        erase_prov_subtree(t, inh, prov);
+        t.remove(inh);
+    };
+    // An element: its own inherit, then its groups'.
+    std::function<void(size_t)> element = [&](size_t e) {
+        std::string ename(t.key(e).str, t.key(e).len);
+        resolve(e, "'" + ename + "'");
+        for (size_t g = t.first_child(e); g != ryml::NONE; g = t.next_sibling(g))
+            if (t.is_map(g) && t.has_key(g))
+                resolve(g, "'" + ename + "' " +
+                               std::string(t.key(g).str, t.key(g).len));
+    };
+    // The items of a `line`, a `branches` list or a UnionEle's `elements`
+    // (beamlines.md): an item keyed by an element defined before -- with no
+    // `kind` of its own -- is an instance of it, taking the definition's values
+    // as they stand now and overriding what it sets itself; an item with an
+    // `inherit` takes that. A sub-line or an item naming nothing defined
+    // before is left for expansion.
+    std::function<void(size_t)> items = [&](size_t n) {
+        for (size_t c = t.first_child(n); c != ryml::NONE; c = t.next_sibling(c)) {
+            if (!t.is_seq(c) || !t.has_key(c)) continue;
+            std::string key(t.key(c).str, t.key(c).len);
+            if (key != "line" && key != "branches" && key != "elements") continue;
+            for (size_t e = t.first_child(c); e != ryml::NONE;
+                 e = t.next_sibling(e)) {
+                size_t item = entry_content(t, e);
+                if (item == ryml::NONE || !t.is_map(item)) continue;
+                std::string iname(t.key(item).str, t.key(item).len);
+                auto b = before.find(iname);
+                bool names_line = b != before.end() && is_line(b->second);
+                if (t.find_child(item, ryml::to_csubstr("kind")) == ryml::NONE &&
+                    t.find_child(item, ryml::to_csubstr("inherit")) ==
+                        ryml::NONE &&
+                    b != before.end() && !names_line) {
+                    ensure_capacity(t, t.num_children(b->second) + 1);
+                    merge_children_no_rep_tracked(t, b->second, item, prov);
+                }
+                // A branch's `inherit` names its root line, for expansion.
+                if (key != "branches" && !is_line(item) && !names_line)
+                    element(item);
+                items(item);
+            }
+        }
+    };
+    // An inherit on a BeamLine or Lattice names a line, which expansion
+    // resolves.
+    if (!is_line(def)) element(def);
+    items(def);
+}
 
+// Walk the `facility` list in order (s:lattice.expand): each definition has its
+// inherits resolved and its immediate expressions evaluated as it is reached,
+// and each `set` acts on the definitions before it. So an immediate expression
+// keeps the value it had at its point in the list, while an `expr(...)` delayed
+// one is left for the evaluation after expansion. What an immediate expression
+// cannot evaluate yet -- it may need a parameter expansion computes -- is left
+// too, and evaluated (or reported) after expansion.
+static void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
+                              std::map<size_t, size_t>& prov,
+                              ProblemList& problems) {
+    std::map<std::string, size_t> everything;
+    make_ele_map(everything, t, t.root_id());
+
+    pals::SymbolLookup resolve;
+    pals::SpeciesLookup species;
+    make_expression_context(t, resolve, species);
+    SubstituteMode immediate;
+    immediate.immediate_only = true;
+
+    std::map<std::string, size_t> before;  // facility definitions so far
     std::vector<size_t> defined;
-    for (size_t i = 0; i < entries.size(); ++i) {
-        if (cmds[i].empty()) {
-            defined.push_back(entries[i]);
+    for (size_t entry : entries) {
+        std::vector<SetCommand> cmds = entry_set_commands(t, entry, problems);
+        if (cmds.empty()) {
+            size_t def = entry_content(t, entry);
+            if (def != ryml::NONE && t.is_map(def)) {
+                resolve_definition_inherits(t, def, before, everything, prov,
+                                            problems);
+                std::string name(t.key(def).str, t.key(def).len);
+                if (t.find_child(def, ryml::to_csubstr("kind")) != ryml::NONE)
+                    before.emplace(name, def);
+            }
+            substitute_values(t, entry, resolve, species, problems, immediate);
+            defined.push_back(entry);
             continue;
         }
-        // A fresh context per command: each set writes to the tree the next one
-        // reads, so a memoized value from before it would be stale.
-        for (const SetCommand& cmd : cmds[i]) {
-            pals::SymbolLookup resolve;
-            pals::SpeciesLookup species;
-            make_expression_context(t, resolve, species);
+        for (const SetCommand& cmd : cmds) {
             execute_set(t, cmd,
                         match_definition_parameters(t, defined, cmd.param), true,
                         resolve, species, prov, problems);
+            // A fresh context after each set: it wrote to the tree the next
+            // expression reads, so a memoized value from before it is stale.
+            make_expression_context(t, resolve, species);
         }
     }
 }
@@ -3052,7 +3478,7 @@ static void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
         for (const SetCommand& cmd : entry_set_commands(t, e, problems)) {
             pals::SymbolLookup resolve;
             pals::SpeciesLookup species;
-            make_expression_context(t, resolve, species);
+            make_expression_context(t, resolve, species, lat_node);
             execute_set(t, cmd,
                         match_element_parameters(t, lat_node, cmd.param), false,
                         resolve, species, prov, problems, written);
@@ -3667,10 +4093,10 @@ static void compute_dependent(ryml::Tree& t, size_t ele, const std::string& kind
 }
 
 // Resolve the RFP dependent parameters (rf.md). The active length `L_active`
-// defaults to the element length `L`; it is materialized when non-zero. The RF
+// defaults to the element `length`; it is materialized when non-zero. The RF
 // voltage and gradient are then tied by `voltage = gradient * L_active`: one is
 // derived from the other, or an inconsistency is flagged when both are set.
-// (frequency <-> harmon is *not* resolved here: it needs the change in reference
+// (frequency <-> harmonic_number is *not* resolved here: it needs the change in reference
 // time across the whole branch, which is not known element-by-element.) Any
 // element carrying an RFP group is handled, keyed on the group's presence.
 static void compute_rf_dependent(ryml::Tree& t, size_t ele, double length,
@@ -4873,11 +5299,13 @@ static void make_expanded_and_adjunct(ParsedData* comb,
     deep_copy_tracked(t, t.root_id(), comb->tree, comb->tree.root_id(),
                       work.provenance);
 
-    // The `facility` `set` commands run first, on the element definitions, so
-    // expansion copies the values they write into every use of a definition.
+    // The `facility` list is walked first, in order: its sets act on the
+    // element definitions, so expansion copies the values they write into every
+    // use of a definition, and its immediate expressions and inherits are
+    // settled at their place in the list.
     check_definitions(t, problems);
-    run_pre_expansion_sets(t, pals_list_entries(t, "facility"), work.provenance,
-                           problems);
+    run_facility_list(t, pals_list_entries(t, "facility"), work.provenance,
+                      problems);
     const std::vector<size_t> post = pals_list_entries(t, "post_expansion");
 
     std::map<std::string, size_t> emap;
@@ -4932,7 +5360,8 @@ static void make_expanded_and_adjunct(ParsedData* comb,
         // Node ids of existing nodes are unchanged -- only scalar text is
         // rewritten -- so provenance stays valid; a parameter a controller
         // creates is new and simply has no provenance, like ReferenceP/FloorP.
-        evaluate_expressions(t, lat_node, work.provenance, problems);
+        std::vector<DelayedValue> delayed;
+        evaluate_expressions(t, lat_node, work.provenance, problems, &delayed);
 
         // The last point at which the lattice holds the author's inputs and
         // nothing else. Record their paths now; everything the finished lattice
@@ -4948,20 +5377,29 @@ static void make_expanded_and_adjunct(ParsedData* comb,
         run_element_bookkeeper(t, lat_node, problems);
 
         // `post_expansion` acts on the lattice just built: its sets reach each
-        // expanded copy of an element separately, and the controllers are then
-        // applied again (over both lists) so they stay authoritative over any
-        // parameter a set touched. The bookkeeper runs a second time to
-        // recompute what those writes invalidated -- reference and floor
-        // parameters, and the family members execute_set dropped.
+        // expanded copy of an element separately. The delayed expressions are
+        // then evaluated again, against the lattice the sets left, and the
+        // controllers applied again (over both lists) so they stay
+        // authoritative over any parameter a set touched. The bookkeeper runs a
+        // second time to recompute what those writes invalidated -- reference
+        // and floor parameters, and the family members execute_set dropped.
         if (!post.empty()) {
             std::vector<SetTarget> set_writes;
             run_post_expansion_sets(t, lat_node, post, work.provenance,
                                     problems, &set_writes);
+            std::set<size_t> set_nodes;
+            for (const SetTarget& w : set_writes) {
+                size_t n = resolve_param_path(t, w.ele, w.path);
+                if (n != ryml::NONE) set_nodes.insert(n);
+            }
+            std::vector<DelayedValue> back =
+                restore_delayed(t, delayed, set_nodes);
             // These writes are inputs like any other, but they land after the
             // snapshot above; join them to it before the second bookkeeper pass
             // derives their families again.
             add_set_targets(t, lat_node, set_writes, authored);
             evaluate_expressions(t, lat_node, work.provenance, problems);
+            refresh_changed_delayed(t, back, work.provenance);
             run_element_bookkeeper(t, lat_node, problems);
         }
 

@@ -1,6 +1,6 @@
 #include "test_helpers.h"
 
-// Controllers: miscellaneous.md (s:controller) for what a Controller is, and
+// Controllers: parameter-values-and-controllers.md (s:controller) for what a Controller is, and
 // lattice-construction.md (s:lattice.expand) for where applying the ABSOLUTE
 // ones sits in lattice expansion.
 
@@ -423,12 +423,12 @@ TEST_CASE("a variable with no value defaults to zero",
     free_all(lat);
 }
 
-TEST_CASE("controller expressions may not reach outside their controller",
-          "[expr][lattices][controller][problems]") {
-    // Neither a lattice parameter nor another controller's variable may appear
-    // in an initial value or a control expression -- both are spelled with `>`,
-    // and both would make the evaluation order depend on more than the
-    // `controls` hierarchy.
+TEST_CASE("controller expressions may use lattice parameters and other "
+          "controllers' variables",
+          "[expr][lattices][controller]") {
+    // s:controller no longer restricts what an initial value or a control
+    // expression may reference: an initial value may use another controller's
+    // variable (`ps1>cur`) and a control expression a lattice parameter.
     const std::string doc =
         lattice_with(
                      "    - ps1:\n"
@@ -441,7 +441,7 @@ TEST_CASE("controller expressions may not reach outside their controller",
                      "          derived: ps1>cur * 2\n"
                      "        controls:\n"
                      "          - parameter: Q1>MagneticMultipoleP.Kn1L\n"
-                     "            expression: Q1>length + 1\n",
+                     "            expression: Q1>length + derived\n",
                      "                - Q1:\n"
                      "                    kind: Quadrupole\n"
                      "                    length: 0.5\n"
@@ -449,29 +449,25 @@ TEST_CASE("controller expressions may not reach outside their controller",
                      "                      Kn1L: 0.0\n");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
-    std::vector<std::string> msgs = problem_messages(lat);
-    REQUIRE(any_contains(msgs, "variable 'derived' may not reference"));
-    REQUIRE(any_contains(msgs, "control expression may not reference"));
-
-    // Q1 keeps its own value: the rejected entry drives nothing.
+    INFO(joined(lat));
+    REQUIRE(lat.problems.count == 0);
     REQUIRE(close(expanded_param(lat.full_expanded, "Q1", "MagneticMultipoleP",
                                  "Kn1L"),
-                  0.0));
+                  1.5));
 
     free_all(lat);
 }
 
-TEST_CASE("a variable initial value may not reference a variable",
-          "[expr][lattices][controller][problems]") {
-    // An initial value is a constant expression: it may use the built-in and
-    // user constants but no variable, not even one of its own controller's, so
-    // that no initial value has to be evaluated before any other.
+TEST_CASE("a variable initial value may use another variable",
+          "[expr][lattices][controller]") {
+    // Initial values are immediate expressions; one may use another variable
+    // of the same controller, whatever order they are written in.
     const std::string doc =
         lattice_with("    - ps1:\n"
                      "        kind: Controller\n"
                      "        variables:\n"
-                     "          cur1: 0.023\n"
-                     "          cur2: cur1 / c_light\n"
+                     "          cur2: cur1 / 4\n"
+                     "          cur1: 0.024\n"
                      "        controls:\n"
                      "          - parameter: Q1>MagneticMultipoleP.Kn1L\n"
                      "            expression: cur1 + cur2\n",
@@ -481,15 +477,40 @@ TEST_CASE("a variable initial value may not reference a variable",
                      "                      Kn1L: 0.0\n");
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
-    REQUIRE(any_contains(problem_messages(lat),
-                         "variable 'cur2': an initial value may not reference "
-                         "the variable 'cur1'"));
-
-    // The rejected initial value falls back to the default, zero, so the
-    // control expression is still evaluated: cur1 + 0.
+    INFO(joined(lat));
+    REQUIRE(lat.problems.count == 0);
     REQUIRE(close(expanded_param(lat.full_expanded, "Q1", "MagneticMultipoleP",
                                  "Kn1L"),
-                  0.023));
+                  0.03));
+
+    free_all(lat);
+}
+
+TEST_CASE("a delayed controller initial value is reported",
+          "[expr][lattices][controller][problems]") {
+    // Initial values are immediate; wrapping one in expr(...) is an error.
+    // Wrapping a control expression is redundant and ignored.
+    const std::string doc =
+        lattice_with("    - ps1:\n"
+                     "        kind: Controller\n"
+                     "        variables:\n"
+                     "          cur: expr(0.5)\n"
+                     "        controls:\n"
+                     "          - parameter: Q1>MagneticMultipoleP.Kn1L\n"
+                     "            expression: expr(cur + 1)\n",
+                     "                - Q1:\n"
+                     "                    kind: Quadrupole\n"
+                     "                    MagneticMultipoleP:\n"
+                     "                      Kn1L: 0.0\n");
+
+    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(any_contains(problem_messages(lat),
+                         "variable 'cur': an initial value may not be wrapped "
+                         "in expr(...)"));
+    // The rejected value falls back to zero; the control expression is used.
+    REQUIRE(close(expanded_param(lat.full_expanded, "Q1", "MagneticMultipoleP",
+                                 "Kn1L"),
+                  1.0));
 
     free_all(lat);
 }

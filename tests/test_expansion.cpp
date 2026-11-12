@@ -1747,3 +1747,109 @@ TEST_CASE("a malformed top-level file is a fatal parse problem, not a crash",
     delete_tree(lat.full_expanded);
     delete_tree(lat.adjunct);
 }
+
+// A ring with a Fork `f1` whose body is `fork_body` (indented for the element),
+// a dump line, and a Drift `d9` that is not a line.
+static std::string fork_doc(const std::string& fork_body) {
+    return "PALS:\n"
+           "  facility:\n"
+           "    - d9:\n"
+           "        kind: Drift\n"
+           "        length: 1\n"
+           "    - dump_line:\n"
+           "        kind: BeamLine\n"
+           "        line:\n"
+           "          - dump_begin:\n"
+           "              kind: BeginningEle\n"
+           "          - d9\n"
+           "    - ring:\n"
+           "        kind: BeamLine\n"
+           "        line:\n"
+           "          - f1:\n"
+           "              kind: Fork\n" +
+           fork_body +
+           "    - lat1:\n"
+           "        kind: Lattice\n"
+           "        branches:\n"
+           "          - ring\n"
+           "    - use: lat1\n";
+}
+
+TEST_CASE("Fork problems are reported", "[lattices][fork][problems]") {
+    struct Case {
+        const char* body;
+        const char* message;
+    };
+    const Case cases[] = {
+        {"", "Fork element 'f1': missing ForkP"},
+        {"              ForkP:\n"
+         "                new_branch: dump\n",
+         "Fork element 'f1': ForkP is missing the required field 'to_line'"},
+        {"              ForkP:\n"
+         "                to_line: nowhere\n",
+         "Fork element 'f1': to_line 'nowhere' is not a defined BeamLine"},
+        {"              ForkP:\n"
+         "                to_line: d9\n",
+         "Fork element 'f1': to_line 'd9' has no line to fork into"},
+        {"              ForkP:\n"
+         "                to_line: dump_line\n"
+         "                destination_element: missing_ele\n",
+         "Fork element 'f1': destination_element 'missing_ele' not found in "
+         "'dump_line'"},
+        {"              ForkP:\n"
+         "                to_line: dump_line\n"
+         "                new_branch: null\n",
+         "Fork element 'f1': new_branch is null, but to_line 'dump_line' is not "
+         "an existing branch"},
+    };
+    for (const Case& c : cases) {
+        INFO(c.message);
+        struct lattices lat = expand_PALS_string(fork_doc(c.body).c_str(), nullptr);
+        bool found = false;
+        std::string all;
+        for (size_t i = 0; i < lat.problems.count; ++i) {
+            all += std::string(lat.problems.items[i].message) + "; ";
+            if (std::string(lat.problems.items[i].message) == c.message)
+                found = true;
+        }
+        INFO(all);
+        REQUIRE(found);
+        free_lattice_problems(lat.problems);
+        delete_tree(lat.original);
+        delete_tree(lat.combined);
+        delete_tree(lat.expanded);
+        delete_tree(lat.full_expanded);
+        delete_tree(lat.adjunct);
+    }
+}
+
+TEST_CASE("an undefined repeated beamline is reported", "[lattices][problems]") {
+    const char* doc =
+        "PALS:\n"
+        "  facility:\n"
+        "    - ring:\n"
+        "        kind: BeamLine\n"
+        "        line:\n"
+        "          - begin:\n"
+        "              kind: BeginningEle\n"
+        "          - cell:\n"
+        "              repeat: 3\n"
+        "    - lat1:\n"
+        "        kind: Lattice\n"
+        "        branches:\n"
+        "          - ring\n"
+        "    - use: lat1\n";
+    struct lattices lat = expand_PALS_string(doc, nullptr);
+    bool found = false;
+    for (size_t i = 0; i < lat.problems.count; ++i)
+        if (std::string(lat.problems.items[i].message) ==
+            "repeat: beamline 'cell' is not defined")
+            found = true;
+    REQUIRE(found);
+    free_lattice_problems(lat.problems);
+    delete_tree(lat.original);
+    delete_tree(lat.combined);
+    delete_tree(lat.expanded);
+    delete_tree(lat.full_expanded);
+    delete_tree(lat.adjunct);
+}

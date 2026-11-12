@@ -2349,12 +2349,18 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
             return r;
         }
         size_t ci = vars[vi].ctrl;
+        // Whether a variable this one reads is caught in a cycle, so the
+        // failure is reported as the cycle rather than as an unknown name.
+        bool circular = false;
         pals::SymbolLookup lookup = [&, ci](const std::string& name,
                                             double& out) -> bool {
             size_t vj = var_named(ci, name);
             if (vj != SIZE_MAX) {
                 pals::EvalOutcome o = init_value(vj);
-                if (!o.ok) return false;
+                if (!o.ok) {
+                    if (o.error == "circular initial values") circular = true;
+                    return false;
+                }
                 out = o.value;
                 return true;
             }
@@ -2363,6 +2369,7 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
         bool was_expr = false;
         std::string body = strip_expr_wrapper(vars[vi].text, was_expr);
         r = pals::eval_expression(body, lookup, species);
+        if (!r.ok && circular) r.error = "circular initial values";
         init_active.erase(vi);
         return init_memo[vi] = r;
     };
@@ -2983,7 +2990,7 @@ static bool parse_num(const std::string& s, double& out) {
 // Numeric value of a keyed child, if present and numeric.
 static bool get_num_child(const ryml::Tree& t, size_t parent, const char* key,
                           double& out) {
-    if (parent == ryml::NONE) return false;
+    if (parent == ryml::NONE || !t.is_map(parent)) return false;
     size_t c = t.find_child(parent, ryml::to_csubstr(key));
     if (c == ryml::NONE || !t.has_val(c)) return false;
     return parse_num(std::string(t.val(c).str, t.val(c).len), out);
@@ -2993,7 +3000,7 @@ static bool get_num_child(const ryml::Tree& t, size_t parent, const char* key,
 // stripped; false (and `out` untouched) if absent or empty.
 static bool get_str_child(const ryml::Tree& t, size_t parent, const char* key,
                           std::string& out) {
-    if (parent == ryml::NONE) return false;
+    if (parent == ryml::NONE || !t.is_map(parent)) return false;
     size_t c = t.find_child(parent, ryml::to_csubstr(key));
     if (c == ryml::NONE || !t.has_val(c)) return false;
     std::string v(t.val(c).str, t.val(c).len);
@@ -3160,7 +3167,7 @@ struct SetCommand {
 static size_t materialize_line_reference(ryml::Tree& t, size_t node) {
     if (node == ryml::NONE || t.has_key(node) || !t.has_val(node)) return node;
     std::string name(t.val(node).str, t.val(node).len);
-    t.to_map(node);  // the seq entry becomes the anonymous wrapper map
+    t.change_type(node, ryml::MAP);  // the entry becomes the anonymous wrapper map
     size_t def = t.append_child(node);
     t.to_map(def, t.to_arena(ryml::to_csubstr(name)));
     return def;
@@ -3600,9 +3607,31 @@ static void write_ref(ryml::Tree& t, size_t ele, const RefState& r) {
 // (see referencechange.md): a species, an absolute or delta energy/momentum, and
 // an absolute or delta reference time. Clearing has_E/has_pc lets the subsequent
 // complete_energy() recompute the partner quantity with the new mass/energy.
-static void apply_ref_change(const ryml::Tree& t, size_t ele, RefState& r) {
+// Only one of the energy settings, and one of the time settings, may be given;
+// more is reported, and the first in the order below is used.
+static void apply_ref_change(const ryml::Tree& t, size_t ele, RefState& r,
+                             ProblemList& problems) {
     size_t rc = t.find_child(ele, ryml::to_csubstr("ReferenceChangeP"));
-    if (rc == ryml::NONE) return;
+    if (rc == ryml::NONE || !t.is_map(rc)) return;
+
+    std::string ename =
+        t.has_key(ele) ? std::string(t.key(ele).str, t.key(ele).len) : "";
+    auto exclusive = [&](std::initializer_list<const char*> keys) {
+        std::string given;
+        int n = 0;
+        for (const char* k : keys) {
+            double unused;
+            if (!get_num_child(t, rc, k, unused)) continue;
+            given += (n++ ? ", " : "") + std::string(k);
+        }
+        if (n > 1)
+            add_problem(problems,
+                        "element '" + ename + "': ReferenceChangeP sets " +
+                            given + "; only one of them may be given",
+                        ename);
+    };
+    exclusive({"E_tot_ref", "pc_ref", "dE_ref", "dpc_ref"});
+    exclusive({"time_ref", "dtime_ref"});
 
     std::string sp;
     if (get_str_child(t, rc, "species_ref", sp)) {
@@ -3654,7 +3683,7 @@ static RefState downstream_ref(const ryml::Tree& t, size_t ele,
             down.has_pc = false;  // recompute momentum for the new energy
         }
     } else if (kind == "ReferenceChange") {
-        apply_ref_change(t, ele, down);
+        apply_ref_change(t, ele, down, problems);
     } else if (kind == "Foil") {
         // A Foil can strip electrons, changing the downstream species (and hence
         // energy). The stripping model is not defined by the standard, so the
@@ -3672,10 +3701,12 @@ static RefState downstream_ref(const ryml::Tree& t, size_t ele,
     complete_energy(down);  // refill whichever of E/pc a change above cleared
 
     // Reference transit time: length * (E_up + E_down) / (c * (pc_up + pc_down)).
+    // Added to down.time, not up.time: a ReferenceChange may have set or
+    // shifted it above.
     if (up.has_E && down.has_E && up.has_pc && down.has_pc) {
         double denom = apc::C_LIGHT * (up.pc + down.pc);
         if (denom != 0.0)
-            down.time = up.time + length * (up.E_tot + down.E_tot) / denom;
+            down.time += length * (up.E_tot + down.E_tot) / denom;
     }
     return down;
 }

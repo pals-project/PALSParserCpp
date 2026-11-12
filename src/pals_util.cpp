@@ -10,6 +10,9 @@
 #include <ryml_std.hpp>
 
 std::string child_val_str(const ryml::Tree& t, size_t parent, const char* key) {
+    // find_child requires a map: a group written as a list or a scalar (a
+    // malformed `ForkP:`, say) simply has no such key.
+    if (parent == ryml::NONE || !t.is_map(parent)) return "";
     size_t id = t.find_child(parent, ryml::to_csubstr(key));
     if (id == ryml::NONE || !t.has_val(id)) return "";
     return std::string(t.val(id).str, t.val(id).len);

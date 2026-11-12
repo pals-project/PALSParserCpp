@@ -22,6 +22,35 @@ TEST_CASE("evaluate_pals_expression: arithmetic and precedence", "[expr]") {
                       3.75e7 / (2.99792458e8 * 2.99792458e8)));
 }
 
+TEST_CASE("evaluate_pals_expression: subtraction and unary plus", "[expr]") {
+    REQUIRE(eval_ok("7 - 2 - 3") == 2.0);      // left-associative
+    REQUIRE(eval_ok("7 - 2 * 3") == 1.0);
+    REQUIRE(eval_ok("2 - -3") == 5.0);
+    REQUIRE(eval_ok("+4") == 4.0);
+    REQUIRE(eval_ok("3 * +2") == 6.0);
+}
+
+TEST_CASE("evaluate_pals_expression: what does not evaluate", "[expr]") {
+    bool ok = true;
+    evaluate_pals_expression("sqrt(1, 2)", &ok);   // wrong number of arguments
+    REQUIRE_FALSE(ok);
+    ok = true;
+    evaluate_pals_expression("atan2(1)", &ok);
+    REQUIRE_FALSE(ok);
+    ok = true;
+    evaluate_pals_expression("1 / 0", &ok);        // not a finite number
+    REQUIRE_FALSE(ok);
+    ok = true;
+    evaluate_pals_expression("log(-1)", &ok);
+    REQUIRE_FALSE(ok);
+    ok = true;
+    evaluate_pals_expression("2 +", &ok);
+    REQUIRE_FALSE(ok);
+    ok = true;
+    evaluate_pals_expression("(2 + 3", &ok);
+    REQUIRE_FALSE(ok);
+}
+
 TEST_CASE("evaluate_pals_expression: functions", "[expr]") {
     REQUIRE(close(eval_ok("sqrt(2)"), std::sqrt(2.0)));
     REQUIRE(close(eval_ok("0.1*log(abs(-0.34))"), 0.1 * std::log(0.34)));

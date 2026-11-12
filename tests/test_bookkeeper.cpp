@@ -939,3 +939,244 @@ TEST_CASE("Bookkeeper leaves absent parameter groups alone", "[bookkeeper]") {
     delete_tree(lat.full_expanded);
     delete_tree(lat.adjunct);
 }
+
+// ------------------------------------------------------------
+// Reference energy changes, Patch geometry, and bend lengths
+// ------------------------------------------------------------
+
+namespace {
+
+// A branch: BeginningEle (1 GeV electrons) -> 1 m drift `d1` -> `middle` ->
+// 1 m drift `d2` -> Marker `end`. `middle` is line entries, indented for `line:`.
+std::string line_around(const std::string& middle) {
+    return "PALS:\n"
+           "  facility:\n"
+           "    - ln:\n"
+           "        kind: BeamLine\n"
+           "        line:\n"
+           "          - begin:\n"
+           "              kind: BeginningEle\n"
+           "              ReferenceP:\n"
+           "                species_ref: electron\n"
+           "                E_tot_ref: 1.0e9\n"
+           "          - d1:\n"
+           "              kind: Drift\n"
+           "              length: 1.0\n" +
+           middle +
+           "          - d2:\n"
+           "              kind: Drift\n"
+           "              length: 1.0\n"
+           "          - end:\n"
+           "              kind: Marker\n"
+           "    - lat:\n"
+           "        kind: Lattice\n"
+           "        branches:\n"
+           "          - ln\n"
+           "    - use: lat\n";
+}
+
+std::vector<std::string> problem_list(const struct lattices& lat) {
+    std::vector<std::string> out;
+    for (size_t i = 0; i < lat.problems.count; ++i)
+        out.emplace_back(lat.problems.items[i].message);
+    return out;
+}
+
+std::string problem_text(const struct lattices& lat) {
+    std::string s;
+    for (const std::string& m : problem_list(lat)) s += m + "; ";
+    return s;
+}
+
+void free_lat(struct lattices& lat) {
+    free_lattice_problems(lat.problems);
+    delete_tree(lat.original);
+    delete_tree(lat.combined);
+    delete_tree(lat.expanded);
+    delete_tree(lat.full_expanded);
+    delete_tree(lat.adjunct);
+}
+
+const double M_ELECTRON = 510998.95;  // eV
+const double C_LIGHT = 2.99792458e8;  // m/s
+
+double pc_of(double E, double m) { return std::sqrt(E * E - m * m); }
+
+}  // namespace
+
+TEST_CASE("Bookkeeper adds an RFCavity's dE_ref to the reference energy",
+          "[bookkeeper][reference]") {
+    // rf.md: the downstream reference energy is E_tot_ref + dE_ref. The
+    // transit time uses the average of the two ends,
+    // length * (E_up + E_down) / (c * (pc_up + pc_down)).
+    struct lattices lat = expand_PALS_string(
+        line_around("          - cav:\n"
+                    "              kind: RFCavity\n"
+                    "              length: 0.5\n"
+                    "              RFP:\n"
+                    "                dE_ref: 1.0e8\n")
+            .c_str(),
+        nullptr);
+    INFO(problem_text(lat));
+    YAMLTreeHandle t = lat.full_expanded;
+    REQUIRE(close_rel(param_num(t, "cav", "ReferenceP", "E_tot_ref"), 1.0e9));
+    REQUIRE(close_rel(param_num(t, "d2", "ReferenceP", "E_tot_ref"), 1.1e9));
+    REQUIRE(close_rel(param_num(t, "d2", "ReferenceP", "pc_ref"),
+                      pc_of(1.1e9, M_ELECTRON)));
+    const double pc0 = pc_of(1.0e9, M_ELECTRON), pc1 = pc_of(1.1e9, M_ELECTRON);
+    const double t_cav = param_num(t, "cav", "ReferenceP", "time_ref");
+    REQUIRE(close_rel(param_num(t, "d2", "ReferenceP", "time_ref") - t_cav,
+                      0.5 * (1.0e9 + 1.1e9) / (C_LIGHT * (pc0 + pc1))));
+    free_lat(lat);
+}
+
+TEST_CASE("Bookkeeper applies a ReferenceChange's energy settings",
+          "[bookkeeper][reference]") {
+    // referencechange.md: E_tot_ref and pc_ref set the energy, dE_ref and
+    // dpc_ref adjust it. The partner quantity is recomputed.
+    struct Case {
+        const char* group;
+        double E_down;
+    };
+    const double pc0 = pc_of(1.0e9, M_ELECTRON);
+    const double pc_set = 2.0e9;
+    const Case cases[] = {
+        {"                E_tot_ref: 2.0e9\n", 2.0e9},
+        {"                dE_ref: 5.0e8\n", 1.5e9},
+        {"                pc_ref: 2.0e9\n",
+         std::sqrt(pc_set * pc_set + M_ELECTRON * M_ELECTRON)},
+        {"                dpc_ref: 1.0e8\n",
+         std::sqrt((pc0 + 1.0e8) * (pc0 + 1.0e8) + M_ELECTRON * M_ELECTRON)},
+    };
+    for (const Case& c : cases) {
+        INFO(c.group);
+        struct lattices lat = expand_PALS_string(
+            line_around(std::string("          - rc:\n"
+                                    "              kind: ReferenceChange\n"
+                                    "              ReferenceChangeP:\n") +
+                        c.group)
+                .c_str(),
+            nullptr);
+        INFO(problem_text(lat));
+        REQUIRE(lat.problems.count == 0);
+        YAMLTreeHandle t = lat.full_expanded;
+        REQUIRE(close_rel(param_num(t, "rc", "ReferenceP", "E_tot_ref"), 1.0e9));
+        REQUIRE(close_rel(param_num(t, "d2", "ReferenceP", "E_tot_ref"), c.E_down));
+        REQUIRE(close_rel(param_num(t, "end", "ReferenceP", "pc_ref"),
+                          pc_of(c.E_down, M_ELECTRON)));
+        free_lat(lat);
+    }
+}
+
+TEST_CASE("Bookkeeper applies a ReferenceChange's species and time settings",
+          "[bookkeeper][reference]") {
+    struct lattices lat = expand_PALS_string(
+        line_around("          - rc:\n"
+                    "              kind: ReferenceChange\n"
+                    "              ReferenceChangeP:\n"
+                    "                species_ref: proton\n"
+                    "                E_tot_ref: 2.0e9\n"
+                    "                time_ref: 1.0e-6\n"
+                    "          - rc2:\n"
+                    "              kind: ReferenceChange\n"
+                    "              ReferenceChangeP:\n"
+                    "                dtime_ref: 1.0e-9\n")
+            .c_str(),
+        nullptr);
+    INFO(problem_text(lat));
+    REQUIRE(lat.problems.count == 0);
+    YAMLTreeHandle t = lat.full_expanded;
+    YAMLNodeId rp = get_child_by_key(t, find_by_key(t, "d2"), "ReferenceP");
+    REQUIRE(val_eq(t, get_child_by_key(t, rp, "species_ref"), "proton"));
+    // The momentum is recomputed with the proton mass.
+    const double E = param_num(t, "d2", "ReferenceP", "E_tot_ref");
+    const double pc = param_num(t, "d2", "ReferenceP", "pc_ref");
+    REQUIRE(close_rel(E, 2.0e9));
+    REQUIRE(std::fabs(std::sqrt(E * E - pc * pc) / 938.272e6 - 1.0) < 1e-5);
+    // time_ref sets the time; dtime_ref adds to it. A ReferenceChange has no
+    // length, so the time carries straight on to the next element.
+    REQUIRE(close_rel(param_num(t, "rc2", "ReferenceP", "time_ref"), 1.0e-6));
+    REQUIRE(close_rel(param_num(t, "d2", "ReferenceP", "time_ref"),
+                      1.0e-6 + 1.0e-9));
+    free_lat(lat);
+}
+
+TEST_CASE("Bookkeeper flags more than one ReferenceChange energy or time setting",
+          "[bookkeeper][reference][problems]") {
+    // referencechange.md: only one of dE_ref, dpc_ref, E_tot_ref and pc_ref
+    // may be present, and only one of dtime_ref and time_ref.
+    struct lattices lat = expand_PALS_string(
+        line_around("          - rc:\n"
+                    "              kind: ReferenceChange\n"
+                    "              ReferenceChangeP:\n"
+                    "                E_tot_ref: 2.0e9\n"
+                    "                dE_ref: 1.0e8\n"
+                    "                time_ref: 1.0e-6\n"
+                    "                dtime_ref: 1.0e-9\n")
+            .c_str(),
+        nullptr);
+    std::string all = problem_text(lat);
+    INFO(all);
+    REQUIRE(all.find("element 'rc': ReferenceChangeP sets E_tot_ref, dE_ref; "
+                     "only one of them may be given") != std::string::npos);
+    REQUIRE(all.find("element 'rc': ReferenceChangeP sets time_ref, dtime_ref; "
+                     "only one of them may be given") != std::string::npos);
+    free_lat(lat);
+}
+
+TEST_CASE("Bookkeeper places the elements after a Patch", "[bookkeeper][floor]") {
+    // patch.md: the offsets move the exit frame, and y_rot turns it toward +x
+    // (a positive theta, the opposite sense to a positive bend angle).
+    struct lattices lat = expand_PALS_string(
+        line_around("          - p1:\n"
+                    "              kind: Patch\n"
+                    "              PatchP:\n"
+                    "                x_offset: 0.1\n"
+                    "                z_offset: 0.3\n"
+                    "          - p2:\n"
+                    "              kind: Patch\n"
+                    "              PatchP:\n"
+                    "                y_rot: 0.25\n")
+            .c_str(),
+        nullptr);
+    INFO(problem_text(lat));
+    YAMLTreeHandle t = lat.full_expanded;
+    REQUIRE(close(param_num(t, "p2", "FloorP", "x"), 0.1));
+    REQUIRE(close(param_num(t, "p2", "FloorP", "z"), 1.3));
+    REQUIRE(close(param_num(t, "p2", "FloorP", "theta"), 0.0));
+    REQUIRE(close(param_num(t, "d2", "FloorP", "theta"), 0.25));
+    REQUIRE(close(param_num(t, "end", "FloorP", "x"), 0.1 + std::sin(0.25)));
+    REQUIRE(close(param_num(t, "end", "FloorP", "z"), 1.3 + std::cos(0.25)));
+    free_lat(lat);
+}
+
+TEST_CASE("Bookkeeper derives the bend length from its chord or rectangle length",
+          "[bookkeeper][bend]") {
+    // bend.md: L_chord = 2 rho sin(angle/2) and L_rectangle = rho sin(angle),
+    // so length = L_chord / sinc(angle/2) = L_rectangle / sinc(angle).
+    const double angle = 0.2;
+    struct Case {
+        const char* given;
+        double length;
+    };
+    const Case cases[] = {
+        {"                L_chord: 1.0\n", 1.0 / (std::sin(angle / 2) / (angle / 2))},
+        {"                L_rectangle: 1.0\n", 1.0 / (std::sin(angle) / angle)},
+    };
+    for (const Case& c : cases) {
+        INFO(c.given);
+        struct lattices lat = expand_PALS_string(
+            line_around(std::string("          - b1:\n"
+                                    "              kind: Bend\n"
+                                    "              BendP:\n"
+                                    "                angle_ref: 0.2\n") +
+                        c.given)
+                .c_str(),
+            nullptr);
+        INFO(problem_text(lat));
+        REQUIRE(lat.problems.count == 0);
+        REQUIRE(close(param_num(lat.full_expanded, "b1", nullptr, "length"),
+                      c.length));
+        free_lat(lat);
+    }
+}

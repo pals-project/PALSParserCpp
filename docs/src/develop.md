@@ -118,6 +118,33 @@ build/tests/validate_standard_examples --root <path-to-pals>/examples \
     --manifest tests/standard_examples_manifest.txt
 ```
 
+### Measuring test coverage
+
+With clang's source-based coverage, from the repository root (on macOS the
+Apple clang in `/usr/bin` works; prefix the LLVM tools with `xcrun`):
+
+```console
+cmake -S . -B build-cov -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_C_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
+  -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
+  -DCMAKE_EXE_LINKER_FLAGS=-fprofile-instr-generate \
+  -DCMAKE_SHARED_LINKER_FLAGS=-fprofile-instr-generate
+cmake --build build-cov
+LLVM_PROFILE_FILE=build-cov/cov-%p.profraw build-cov/tests/tests
+llvm-profdata merge -o build-cov/cov.profdata build-cov/cov-*.profraw
+llvm-cov report build-cov/tests/tests -object build-cov/libPALSParserCpp.dylib \
+  -instr-profile=build-cov/cov.profdata src
+```
+
+`llvm-cov show` with the same arguments marks each line that never ran. The
+library is `libPALSParserCpp.so` on Linux.
+
+A Debug build also turns on rapidyaml's own checks, which a Release build
+compiles out. They catch a node read as the wrong type -- `find_child` on a
+list, say -- that a Release build would pass over silently, so run the tests
+in a Debug build now and then.
+
 ## Building the documentation
 
 The site is built with Sphinx (MyST Markdown + the Furo theme), with the C/C++

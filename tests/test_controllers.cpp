@@ -782,3 +782,69 @@ TEST_CASE("of two controllers on one family the later one states it",
 
     free_all(lat);
 }
+
+TEST_CASE("malformed controllers are reported", "[controllers][problems]") {
+    const std::string body =
+        "                - q1:\n"
+        "                    kind: Quadrupole\n"
+        "                    length: 0.5\n";
+    struct Case {
+        const char* ctrl;
+        const char* message;
+    };
+    const Case cases[] = {
+        {"    - c1:\n"
+         "        kind: Controller\n"
+         "        variables:\n"
+         "          v: 1\n"
+         "        controls:\n"
+         "          - expression: 2*v\n",
+         "controller 'c1': a controls entry has no"},
+        {"    - c1:\n"
+         "        kind: Controller\n"
+         "        variables:\n"
+         "          v: 1\n"
+         "        controls:\n"
+         "          - parameter: q1>MagneticMultipoleP.Kn1\n",
+         "controller 'c1': controls entry 'q1>MagneticMultipoleP.Kn1' has no "
+         "`expression`"},
+        {"    - c1:\n"
+         "        kind: Controller\n"
+         "        variables:\n"
+         "          v: 1\n"
+         "    - c2:\n"
+         "        kind: Controller\n"
+         "        variables:\n"
+         "          w: 1\n"
+         "        controls:\n"
+         "          - parameter: c1>nope\n"
+         "            expression: w\n",
+         "controller 'c2' controls 'c1>nope': controller 'c1' has no variable "
+         "'nope'"},
+        {"    - c1:\n"
+         "        kind: Controller\n"
+         "        variables:\n"
+         "          v: 1\n"
+         "        controls:\n"
+         "          - parameter: q1\n"
+         "            expression: v\n",
+         "controller 'c1': target 'q1' names no element parameter"},
+        {"    - c1:\n"
+         "        kind: Controller\n"
+         "        variables:\n"
+         "          a: 2*b\n"
+         "          b: a+1\n"
+         "        controls:\n"
+         "          - parameter: q1>MagneticMultipoleP.Kn1\n"
+         "            expression: a\n",
+         "circular initial values"},
+    };
+    for (const Case& c : cases) {
+        INFO(c.ctrl);
+        struct lattices lat =
+            expand_PALS_string(lattice_with(c.ctrl, body).c_str(), nullptr);
+        INFO(joined(lat));
+        REQUIRE(any_contains(problem_messages(lat), c.message));
+        free_all(lat);
+    }
+}

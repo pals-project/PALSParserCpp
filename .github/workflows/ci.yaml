@@ -8,13 +8,20 @@ on:
 
 jobs:
   build-and-test:
-    name: C++ - ${{ github.event_name }}
+    name: C++ ${{ matrix.build_type }} - ${{ github.event_name }}
     runs-on: ubuntu-latest
     permissions: 
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Debug keeps rapidyaml's own checks, which Release compiles out: they
+        # abort on a node read as the wrong type (find_child on a list, say)
+        # that a Release build passes over silently.
+        build_type: [Release, Debug]
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure --verbose --no-compress-output
 

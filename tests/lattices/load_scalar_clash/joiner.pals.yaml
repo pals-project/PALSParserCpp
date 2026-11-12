@@ -1,0 +1,4 @@
+PALS:
+  phase_space_coordinates: KINETIC_AND_MOMENTUM
+  load:
+    - a.pals.yaml

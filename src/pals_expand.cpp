@@ -260,6 +260,21 @@ static std::string short_location(const ryml::Tree& t, size_t node) {
     return key;
 }
 
+// True if the keyed map `node` is a `line` or `elements` item that uses, but
+// does not define, an element: it has neither a `kind` nor an `inherit`.
+static bool is_use_item(const ryml::Tree& t, size_t node) {
+    if (t.find_child(node, ryml::to_csubstr("kind")) != ryml::NONE ||
+        t.find_child(node, ryml::to_csubstr("inherit")) != ryml::NONE)
+        return false;
+    size_t wrapper = t.parent(node);
+    if (wrapper == ryml::NONE || !t.is_map(wrapper) || t.has_key(wrapper))
+        return false;
+    size_t seq = t.parent(wrapper);
+    if (seq == ryml::NONE || !t.is_seq(seq) || !t.has_key(seq)) return false;
+    return t.key(seq) == ryml::to_csubstr("line") ||
+           t.key(seq) == ryml::to_csubstr("elements");
+}
+
 // Forward declaration — handle_fork calls expand, expand calls handle_fork
 static void expand(ryml::Tree& t, size_t node,
                    std::map<std::string, size_t>& emap,
@@ -638,6 +653,22 @@ static void expand(ryml::Tree& t, size_t node,
 
     // Map — handle inherit, detect Lattice/Fork, recurse
     if (t.is_map(node)) {
+        // A keyed `line` or `elements` item with no `kind` or `inherit` of its
+        // own uses the element it names (beamlines.md): it gets that element's
+        // parameters now, at branch expansion, so every set made in `facility`
+        // reaches it (names.md). What the item sets itself wins. A name that
+        // is a BeamLine is a sub-line, handled with the sequence.
+        if (t.has_key(node) && is_use_item(t, node)) {
+            auto it = emap.find(std::string(t.key(node).str, t.key(node).len));
+            if (it != emap.end() && it->second != node) {
+                std::string dk = child_val_str(t, it->second, "kind");
+                if (dk != "BeamLine" && dk != "Lattice") {
+                    ensure_capacity(t, 2 * t.num_children(it->second) + 2);
+                    merge_children_no_rep_tracked(t, it->second, node, prov);
+                }
+            }
+        }
+
         // Inherit: merge fields from named element (existing keys win)
         size_t inherit_id = t.find_child(node, ryml::to_csubstr("inherit"));
         if (inherit_id != ryml::NONE) {
@@ -3441,11 +3472,11 @@ static void resolve_definition_inherits(
                                std::string(t.key(g).str, t.key(g).len));
     };
     // The items of a `line`, a `branches` list or a UnionEle's `elements`
-    // (beamlines.md): an item keyed by an element defined before -- with no
-    // `kind` of its own -- is an instance of it, taking the definition's values
-    // as they stand now and overriding what it sets itself; an item with an
-    // `inherit` takes that. A sub-line or an item naming nothing defined
-    // before is left for expansion.
+    // (beamlines.md): an item that defines an element in place -- with a
+    // `kind` or an `inherit` of its own -- inherits now, like any definition.
+    // An item that only uses an element defined elsewhere gets that element's
+    // parameters at branch expansion (names.md), so it is left alone here, as
+    // are sub-lines.
     std::function<void(size_t)> items = [&](size_t n) {
         for (size_t c = t.first_child(n); c != ryml::NONE; c = t.next_sibling(c)) {
             if (!t.is_seq(c) || !t.has_key(c)) continue;
@@ -3458,13 +3489,6 @@ static void resolve_definition_inherits(
                 std::string iname(t.key(item).str, t.key(item).len);
                 auto b = before.find(iname);
                 bool names_line = b != before.end() && is_line(b->second);
-                if (t.find_child(item, ryml::to_csubstr("kind")) == ryml::NONE &&
-                    t.find_child(item, ryml::to_csubstr("inherit")) ==
-                        ryml::NONE &&
-                    b != before.end() && !names_line) {
-                    ensure_capacity(t, t.num_children(b->second) + 1);
-                    merge_children_no_rep_tracked(t, b->second, item, prov);
-                }
                 // A branch's `inherit` names its root line, for expansion.
                 if (key != "branches" && !is_line(item) && !names_line)
                     element(item);

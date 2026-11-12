@@ -198,7 +198,6 @@ std::string facility_qualifier_file(const std::string& body,
            "        line:\n" +
            std::string(BEGIN_ENTRY) +
            "          - q1:\n"
-           "              kind: Quadrupole\n"
            "              length: 0.9\n"
            "    - mylat:\n"
            "        kind: Lattice\n"
@@ -296,7 +295,8 @@ TEST_CASE("an unqualified set targets the definition, not the references to it",
 TEST_CASE("an unqualified set writes the facility definition only",
           "[expr][lattices][set]") {
     // names.md: before expansion `q1` names the definition standing under
-    // facility, not the q1 written inside myline.
+    // facility, not the q1 item in myline, which only uses it. The item gets
+    // the definition's parameters at branch expansion but keeps its own length.
     const std::string doc =
         facility_qualifier_file("    - sets:\n"
                                 "        - q1>length: 0.4\n");
@@ -308,7 +308,7 @@ TEST_CASE("an unqualified set writes the facility definition only",
     REQUIRE(v.kind == PARAM_VALUE_NUMBER);
     REQUIRE(close(v.number, 0.4));
 
-    // The q1 inside myline, and so the copy expansion made from it, is untouched.
+    // The q1 item in myline keeps the length it sets itself.
     REQUIRE(close(one_param(lat.full_expanded, "q1", nullptr, "length"), 0.9));
 
     free_all(lat);

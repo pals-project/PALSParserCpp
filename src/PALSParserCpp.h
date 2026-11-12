@@ -488,11 +488,12 @@ YAML_API void free_correspondence_map(struct correspondence_map map);
  *
  * In an expanded lattice (`expanded`, `full_expanded`) a name reaches the
  * elements of the lattice. In a tree that holds a `PALS` node (`original`,
- * `combined`, `adjunct`) an unqualified name reaches the element definitions
- * standing under `facility` or `post_expansion`, and only a `{branch}>>`
- * qualified name reaches the elements written in a beamline's `line` --
- * including a bare reference (`- q1`), and the elements of the sub-lines the
- * beamline uses.
+ * `combined`, `adjunct`) an unqualified name reaches the element definitions:
+ * those standing under `facility` or `post_expansion`, and those defined in
+ * place in a beamline's `line` (with a `kind` or an `inherit` of their own). A
+ * `{branch}>>` qualified name reaches every element of a beamline's `line` --
+ * including a line item that only uses an element (`- q1`), and the elements
+ * of the sub-lines the beamline uses.
  *
  * The node returned for each match is whatever the string resolves to: the
  * element node (no parameter path), or the parameter-group or parameter node

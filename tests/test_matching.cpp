@@ -82,7 +82,7 @@ TEST_CASE("the name pattern is a whole-name (anchored) match", "[matching]") {
 
 // ---- Before expansion: a tree holding the PALS node ----
 
-TEST_CASE("before expansion an unqualified name reaches the facility "
+TEST_CASE("before expansion an unqualified name reaches the element "
           "definitions only",
           "[matching]") {
     YAMLTreeHandle t = parse_string(MATCH_YAML);
@@ -93,11 +93,15 @@ TEST_CASE("before expansion an unqualified name reaches the facility "
     REQUIRE(val_eq(t, m.nodes[0], "0.5"));
     free_name_matches(m);
 
-    // S1 is written inside the line of `sub`, so no unqualified name reaches it.
-    REQUIRE(match_count(t, "S1>length") == 0);
+    // S1 is defined in place in the line of `sub` (names.md), so an
+    // unqualified name reaches it too.
+    m = match_names(t, "S1>length");
+    REQUIRE(m.count == 1);
+    REQUIRE(val_eq(t, m.nodes[0], "0.2"));
+    free_name_matches(m);
 
     // Beamlines, lattices, controllers and constants are not elements.
-    REQUIRE(match_count(t, ".*>length") == 3);  // B1a, B1b, Q1
+    REQUIRE(match_count(t, ".*>length") == 4);  // B1a, B1b, Q1, S1
     delete_tree(t);
 }
 

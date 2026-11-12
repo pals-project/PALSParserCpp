@@ -99,6 +99,25 @@ Nothing about the tests depends on where they are started from. (The examples ar
 a different story: `example_rw` and `print_lattices` reach their lattices through
 `../lattice_files/`, so they still have to be run from `build/`.)
 
+### The standard's example lattices
+
+A separate check runs every example lattice of the PALS standard
+(`pals-project/pals/examples`) through the parser. Each `*.pals.yaml` file must
+expand with no problems to a non-empty lattice, except those listed in
+`tests/standard_examples_manifest.txt`, whose header documents the entry kinds.
+The `standard_examples` workflow runs it in CI against the pals commit pinned in
+`tests/standard_examples_git_reference.txt`, so a change to the standard cannot
+break an unrelated PR. To check a newer pals commit, bump the pin by hand in a PR
+of its own, along with any manifest or parser changes it needs.
+
+To run it locally against a checkout of pals:
+
+```console
+cmake --build build --target validate_standard_examples
+build/tests/validate_standard_examples --root <path-to-pals>/examples \
+    --manifest tests/standard_examples_manifest.txt
+```
+
 ### Measuring test coverage
 
 With clang's source-based coverage, from the repository root (on macOS the

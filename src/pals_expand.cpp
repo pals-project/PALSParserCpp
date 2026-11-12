@@ -1663,6 +1663,22 @@ static void set_num_child(ryml::Tree& t, size_t parent, const char* key,
     t.set_val(c, t.to_arena(ryml::to_csubstr(format_double(v))));
 }
 
+// Link a parameter a `set` or a controller has written (`written`) back to the
+// node holding the expression that wrote it (`writer`): the parameter's value
+// now comes from there, and what it held before is no longer relevant. The
+// correspondence map then leads from the parameter to that expression, so a
+// program can tell, for instance, whether it was delayed. A writer with no
+// provenance of its own leaves the parameter unlinked.
+static void link_to_writer(size_t written, size_t writer,
+                           std::map<size_t, size_t>& prov) {
+    if (written == ryml::NONE) return;
+    auto w = writer == ryml::NONE ? prov.end() : prov.find(writer);
+    if (w == prov.end())
+        prov.erase(written);
+    else
+        prov[written] = w->second;
+}
+
 // Overwrite a scalar value node in place with a number.
 static void set_scalar_num(ryml::Tree& t, size_t node, double v) {
     t.set_val(node, t.to_arena(ryml::to_csubstr(format_double(v))));
@@ -2233,6 +2249,9 @@ struct CtrlTarget {
     // interdependent family are ordered by it: the later write is the one that
     // states the quantity, and it nullifies the earlier.
     size_t seq = 0;
+    // The `expression` nodes of every control reaching this parameter,
+    // ABSOLUTE and RELATIVE, in evaluation order.
+    std::vector<size_t> expr_nodes;
 };
 
 // Evaluates the controllers and applies them to the expanded lattice.
@@ -2255,7 +2274,8 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
                                  const pals::SpeciesLookup& species,
                                  std::map<size_t, size_t>& prov,
                                  ProblemList& problems,
-                                 std::vector<DelayedValue>* delayed) {
+                                 std::vector<DelayedValue>* delayed,
+                                 std::map<size_t, std::vector<size_t>>* drivers) {
     std::vector<Ctrl> ctrls;
     std::vector<CtrlVar> vars;
     collect_controller_defs(t, ctrls, vars, problems);
@@ -2491,6 +2511,7 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
             for (size_t def : m.elements) {
                 CtrlTarget& tg = targets[{def, path}];
                 tg.seq = seq;
+                tg.expr_nodes.push_back(cc.expr_node);
                 if (c.absolute) {
                     tg.has_absolute = true;
                     if (cc.ok)
@@ -2553,10 +2574,32 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
         for (size_t i = 0; i + 1 < path.size(); ++i)
             parent = find_or_add_map_child(t, parent, path[i].c_str());
         set_num_child(t, parent, path.back().c_str(), tg.sum);
+        // The value is the controllers' now, not any single text's: its link
+        // is dropped, and the controllers are its drivers.
+        link_to_writer(t.find_child(parent, ryml::to_csubstr(path.back())),
+                       ryml::NONE, prov);
         // The controller states this member of its family; what the element
         // definition, or a control reached earlier, said through another member
         // is nullified rather than left to be flagged as inconsistent.
         nullify_family(t, def, path, prov);
+    }
+
+    // Every controller driving a parameter, ABSOLUTE or RELATIVE, is recorded
+    // against it -- several may, so this is a list rather than a link. Done
+    // once all the writes above are made, and by path, so a node one of them
+    // removed is not left behind.
+    if (drivers) {
+        drivers->clear();
+        for (const auto& kv : targets) {
+            size_t param = resolve_param_path(t, kv.first.first,
+                                              split_dots(kv.first.second));
+            if (param == ryml::NONE) continue;
+            std::vector<size_t>& d = (*drivers)[param];
+            for (size_t en : kv.second.expr_nodes) {
+                auto p = prov.find(en);
+                if (p != prov.end()) d.push_back(p->second);
+            }
+        }
     }
 }
 
@@ -2839,13 +2882,15 @@ static void check_definitions(const ryml::Tree& t, ProblemList& problems) {
 static void evaluate_expressions(ryml::Tree& t, size_t lat_node,
                                  std::map<size_t, size_t>& prov,
                                  ProblemList& problems,
-                                 std::vector<DelayedValue>* delayed = nullptr) {
+                                 std::vector<DelayedValue>* delayed = nullptr,
+                                 std::map<size_t, std::vector<size_t>>* drivers =
+                                     nullptr) {
     pals::SymbolLookup resolve;
     pals::SpeciesLookup species;
     make_expression_context(t, resolve, species, lat_node);
 
     evaluate_controllers(t, lat_node, resolve, species, prov, problems,
-                         delayed);
+                         delayed, drivers);
     SubstituteMode mode;
     mode.delayed = delayed;
     substitute_values(t, t.root_id(), resolve, species, problems, mode);
@@ -3086,6 +3131,10 @@ static bool read_set_operand(const ryml::Tree& t, size_t ele,
 struct SetCommand {
     std::string param;   // `parameter`: the name-matching target
     std::string value;   // `value`: the expression to write
+    // The node holding `value`: what the written parameter is linked back to
+    // (its provenance), so the correspondence map leads from the parameter to
+    // the expression that set it rather than to the value it replaced.
+    size_t value_node = ryml::NONE;
     double abs_error = 0.0;
     double rel_error = 0.0;
     bool has_error = false;
@@ -3264,6 +3313,8 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
                             ("expr(" + delayed_body + ")").c_str());
         else
             set_num_child(t, parent, tg.key.c_str(), r.value);
+        link_to_writer(t.find_child(parent, ryml::to_csubstr(tg.key)),
+                       cmd.value_node, prov);
         if (written) written->push_back(tg);
         // This write nullifies the previous settings of the rest of the family:
         // whatever the definition stated before expansion, and -- after it --
@@ -3278,6 +3329,7 @@ static bool read_set_command(const ryml::Tree& t, size_t node, SetCommand& cmd,
                              ProblemList& problems) {
     cmd.param = child_val_str(t, node, "parameter");
     cmd.value = child_val_str(t, node, "value");
+    cmd.value_node = t.find_child(node, ryml::to_csubstr("value"));
     if (cmd.param.empty()) {
         add_problem(problems, "set: no `parameter` target");
         return false;
@@ -3322,6 +3374,7 @@ static std::vector<SetCommand> entry_set_commands(const ryml::Tree& t,
         SetCommand cmd;
         cmd.param.assign(t.key(kv).str, t.key(kv).len);
         cmd.value.assign(t.val(kv).str, t.val(kv).len);
+        cmd.value_node = kv;
         out.push_back(std::move(cmd));
     };
     if (t.is_map(c)) {
@@ -5244,9 +5297,10 @@ static void remap_destination_pointers(ryml::Tree& t, size_t node,
 // the single `name: {...}` entry. The root is synthesised (a ryml root cannot
 // itself carry a key), so it has no counterpart in combined and no provenance
 // entry. When there is no lattice the tree stays an empty map.
-static ParsedData* split_out_lattice(ryml::Tree& t, size_t lat_node,
-                                     const std::map<size_t, size_t>& work_prov,
-                                     ProblemList& problems) {
+static ParsedData* split_out_lattice(
+    ryml::Tree& t, size_t lat_node, const std::map<size_t, size_t>& work_prov,
+    const std::map<size_t, std::vector<size_t>>& work_drivers,
+    ProblemList& problems) {
     ParsedData* out = new ParsedData();
     out->tree.reserve(out->tree.capacity() + t.capacity() + 16);
     out->tree.reserve_arena(out->tree.arena_capacity() + t.arena_capacity());
@@ -5264,6 +5318,12 @@ static ParsedData* split_out_lattice(ryml::Tree& t, size_t lat_node,
     for (const auto& kv : out->provenance) from_work[kv.second] = kv.first;
     remap_destination_pointers(out->tree, out->tree.root_id(), from_work,
                                problems);
+
+    // The drivers, re-keyed from work nodes to this tree's.
+    for (const auto& kv : out->provenance) {
+        auto d = work_drivers.find(kv.second);
+        if (d != work_drivers.end()) out->drivers[kv.first] = d->second;
+    }
 
     chain_prov(out->provenance, work_prov);
     return out;
@@ -5361,7 +5421,8 @@ static void make_expanded_and_adjunct(ParsedData* comb,
         // rewritten -- so provenance stays valid; a parameter a controller
         // creates is new and simply has no provenance, like ReferenceP/FloorP.
         std::vector<DelayedValue> delayed;
-        evaluate_expressions(t, lat_node, work.provenance, problems, &delayed);
+        evaluate_expressions(t, lat_node, work.provenance, problems, &delayed,
+                             &work.drivers);
 
         // The last point at which the lattice holds the author's inputs and
         // nothing else. Record their paths now; everything the finished lattice
@@ -5398,7 +5459,8 @@ static void make_expanded_and_adjunct(ParsedData* comb,
             // snapshot above; join them to it before the second bookkeeper pass
             // derives their families again.
             add_set_targets(t, lat_node, set_writes, authored);
-            evaluate_expressions(t, lat_node, work.provenance, problems);
+            evaluate_expressions(t, lat_node, work.provenance, problems,
+                                 nullptr, &work.drivers);
             refresh_changed_delayed(t, back, work.provenance);
             run_element_bookkeeper(t, lat_node, problems);
         }
@@ -5415,7 +5477,8 @@ static void make_expanded_and_adjunct(ParsedData* comb,
     }
 
     // full_expanded: the lattice as the bookkeeper left it, everything computed.
-    ParsedData* full = split_out_lattice(t, lat_node, work.provenance, problems);
+    ParsedData* full = split_out_lattice(t, lat_node, work.provenance,
+                                         work.drivers, problems);
 
     // expanded: the same lattice, pruned back to what the author wrote. It is
     // cut from the same work tree rather than from `full`, so the two are
@@ -5424,7 +5487,8 @@ static void make_expanded_and_adjunct(ParsedData* comb,
     // dropped rather than said twice.
     ProblemList said_already;
     ParsedData* mini =
-        split_out_lattice(t, lat_node, work.provenance, said_already);
+        split_out_lattice(t, lat_node, work.provenance, work.drivers,
+                          said_already);
     if (lat_node != ryml::NONE) {
         size_t entry = mini->tree.first_child(mini->tree.root_id());
         prune_computed_params(mini->tree, entry, authored, mini->provenance);
@@ -5723,6 +5787,48 @@ YAML_API struct correspondence_map build_correspondence_map(
     }
     return out;
 }
+
+YAML_API YAMLNodeId original_node(YAMLTreeHandle combined, YAMLTreeHandle tree,
+                                  YAMLNodeId node) {
+    if (!combined || !tree || node == YAML_NULL_ID) return YAML_NULL_ID;
+    const std::map<size_t, size_t>& c2o =
+        static_cast<ParsedData*>(combined)->provenance;
+    size_t c = node;
+    if (tree != combined) {
+        const std::map<size_t, size_t>& d2c =
+            static_cast<ParsedData*>(tree)->provenance;
+        auto dc = d2c.find(node);
+        if (dc == d2c.end()) return YAML_NULL_ID;
+        c = dc->second;
+    }
+    auto co = c2o.find(c);
+    return co == c2o.end() ? YAML_NULL_ID : co->second;
+}
+
+YAML_API struct node_list controller_expressions(YAMLTreeHandle combined,
+                                                 YAMLTreeHandle tree,
+                                                 YAMLNodeId node) {
+    struct node_list out = {nullptr, 0};
+    if (!combined || !tree || node == YAML_NULL_ID) return out;
+    const std::map<size_t, size_t>& c2o =
+        static_cast<ParsedData*>(combined)->provenance;
+    const auto& drivers = static_cast<ParsedData*>(tree)->drivers;
+    auto d = drivers.find(node);
+    if (d == drivers.end()) return out;
+    std::vector<YAMLNodeId> ids;
+    for (size_t c : d->second) {
+        auto co = c2o.find(c);
+        if (co != c2o.end()) ids.push_back(co->second);
+    }
+    out.count = ids.size();
+    if (out.count) {
+        out.nodes = new YAMLNodeId[out.count];
+        std::copy(ids.begin(), ids.end(), out.nodes);
+    }
+    return out;
+}
+
+YAML_API void free_node_list(struct node_list list) { delete[] list.nodes; }
 
 YAML_API void free_correspondence_map(struct correspondence_map map) {
     delete[] map.links;

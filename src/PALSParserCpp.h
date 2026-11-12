@@ -233,6 +233,15 @@ struct name_matches {
     size_t count;       ///< Number of ids in @ref nodes.
 };
 
+/**
+ * @brief A flat list of node ids. Free with free_node_list().
+ * @ingroup correspond
+ */
+struct node_list {
+    YAMLNodeId* nodes;  ///< The node ids (owning).
+    size_t count;       ///< Number of ids in @ref nodes.
+};
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -394,6 +403,54 @@ YAML_API double evaluate_pals_expression(const char* expr, bool* ok);
 YAML_API struct correspondence_map build_correspondence_map(
     YAMLTreeHandle original, YAMLTreeHandle combined,
     YAMLTreeHandle full_expanded, YAMLTreeHandle adjunct);
+
+/**
+ * The node of the `original` tree that `node` came from: the text it was
+ * written as. For an evaluated parameter that is the expression it was
+ * evaluated from, so a program can tell, for instance, whether it was delayed
+ * (`expr(...)`). A parameter written by a `set` leads to that set's `value`
+ * -- the text that gave it its value -- not to the value it replaced. A
+ * parameter an ABSOLUTE controller drives takes its value from the
+ * controllers, possibly several summed, rather than from any one text, so it
+ * returns YAML_NULL_ID; controller_expressions() lists the controllers.
+ * @ingroup correspond
+ *
+ * Unlike build_correspondence_map(), this answers for one node and also takes
+ * the `expanded` tree.
+ *
+ * @param combined The `combined` tree of the same parse_and_expand_PALS() call.
+ * @param tree     The tree `node` is in: `expanded`, `full_expanded`,
+ *                 `adjunct` or `combined`.
+ * @param node     The node.
+ * @return The node in `original`, or YAML_NULL_ID when `node` has no source --
+ *         a value the parser computed, such as a FloorP coordinate.
+ */
+YAML_API YAMLNodeId original_node(YAMLTreeHandle combined, YAMLTreeHandle tree,
+                                  YAMLNodeId node);
+
+/**
+ * The controllers driving a parameter: for each `controls` entry that reaches
+ * `node`, ABSOLUTE or RELATIVE, the node of its `expression` in the `original`
+ * tree, in the order the controllers were evaluated. The controller itself is
+ * three get_parent() steps up from an expression: the `controls` entry, the
+ * `controls` list, then the controller.
+ * @ingroup correspond
+ *
+ * @param combined The `combined` tree of the same parse_and_expand_PALS() call.
+ * @param tree     The tree `node` is in: `expanded` or `full_expanded`.
+ * @param node     The parameter's value node.
+ * @return The list, empty when no controller drives `node`. Free with
+ *         free_node_list().
+ */
+YAML_API struct node_list controller_expressions(YAMLTreeHandle combined,
+                                                 YAMLTreeHandle tree,
+                                                 YAMLNodeId node);
+
+/**
+ * Frees the ids owned by a node_list. A list with NULL `nodes` is safe.
+ * @ingroup correspond
+ */
+YAML_API void free_node_list(struct node_list list);
 
 /**
  * Frees the link array owned by a correspondence_map. Passing a map with a NULL

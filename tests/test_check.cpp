@@ -730,3 +730,65 @@ TEST_CASE("a Lattice's branches must be a list", "[check][problems]") {
                            "        branches: bline\n");
     REQUIRE(has(ps, "'branches' must be a list"));
 }
+
+TEST_CASE("malformed girders, adjustments and post_expansion are reported",
+          "[check][problems]") {
+    struct Case {
+        const char* root;
+        const char* message;
+    };
+    const Case cases[] = {
+        {"  girders:\n"
+         "    - g1\n",
+         "PALS node: 'girders' must be a dict of Girder elements keyed by name"},
+        {"  girders:\n"
+         "    q9:\n"
+         "      kind: Quadrupole\n",
+         "girders: 'q9' is not a Girder element"},
+        {"  adjustments:\n"
+         "    optimize: 1\n",
+         "adjustments: must be a list of 'optimize' blocks"},
+        {"  adjustments:\n"
+         "    - vary: 1\n",
+         "adjustments: every entry must be an 'optimize' list"},
+        {"  adjustments:\n"
+         "    - optimize:\n"
+         "        - vary: q1>length\n"
+         "        - target:\n"
+         "            parameter: fractional_tune_a\n"
+         "            value: 0.3\n",
+         "adjustments: 'vary' must be a map"},
+        {"  adjustments:\n"
+         "    - optimize:\n"
+         "        - vary:\n"
+         "            parameter: q1>length\n"
+         "            stepsize: 0.1\n"
+         "        - target:\n"
+         "            parameter: fractional_tune_a\n"
+         "            value: 0.3\n",
+         "adjustments: unknown 'vary' component 'stepsize'"},
+        {"  adjustments:\n"
+         "    - optimize:\n"
+         "        - vary:\n"
+         "            parameter: q1>length\n"
+         "        - target:\n"
+         "            parameter: fractional_tune_a\n",
+         "adjustments: 'target' has no 'value'"},
+        {"  post_expansion:\n"
+         "    set: 1\n",
+         "post_expansion: must be a list"},
+    };
+    for (const Case& c : cases) {
+        INFO(c.root);
+        const std::string doc = std::string("PALS:\n") + c.root +
+                                "  facility:\n"
+                                "    - q1:\n"
+                                "        kind: Quadrupole\n"
+                                "        length: 1\n";
+        auto ps = problems_for(doc.c_str());
+        std::string all;
+        for (const std::string& p : ps) all += p + "; ";
+        INFO(all);
+        REQUIRE(has(ps, c.message));
+    }
+}

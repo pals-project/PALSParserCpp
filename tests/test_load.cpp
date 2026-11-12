@@ -270,3 +270,18 @@ TEST_CASE("a file loaded by two routes is read once", "[load]") {
     // files here, no duplicate for the second route to `shared`.
     REQUIRE(get_size(c.lat.original, get_root(c.lat.original)) == 4);
 }
+
+TEST_CASE("two files disagreeing over a scalar is reported", "[load]") {
+    LoadCase c("load_scalar_clash");
+    c.parse("joiner.pals.yaml");
+    REQUIRE(any_contains(c.problems(),
+                         "disagrees on the value of 'phase_space_coordinates'"));
+}
+
+TEST_CASE("a loaded file with no PALS node is reported", "[load]") {
+    LoadCase c("load_no_pals");
+    c.parse("joiner.pals.yaml");
+    REQUIRE(any_contains(c.problems(), "a.pals.yaml' has no PALS node to load"));
+    REQUIRE(list_of(c.lat.combined, "notes") ==
+            std::vector<std::string>{"joiner"});
+}

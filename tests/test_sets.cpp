@@ -726,3 +726,49 @@ TEST_CASE("a set with a random value is deferred", "[expr][lattices][set]") {
 
     free_all(lat);
 }
+
+TEST_CASE("malformed sets are reported", "[expr][lattices][set][problems]") {
+    // A Quadrupole `q1` in a line, then one bad set per case.
+    const std::string defs =
+        "    - q1:\n"
+        "        kind: Quadrupole\n"
+        "        length: 0.5\n"
+        "    - ln:\n"
+        "        kind: BeamLine\n"
+        "        line:\n" +
+        std::string(BEGIN_ENTRY) +
+        "          - q1\n";
+    struct Case {
+        const char* set;
+        const char* message;
+    };
+    const Case cases[] = {
+        {"    - set:\n"
+         "        value: 0.3\n",
+         "set: no `parameter` target"},
+        {"    - set:\n"
+         "        parameter: q1>length\n",
+         "set 'q1>length': no `value`"},
+        {"    - set:\n"
+         "        parameter: q1\n"
+         "        value: 0.3\n",
+         "target names no element parameter"},
+        {"    - set:\n"
+         "        parameter: q1>length\n"
+         "        value: 2 * nonesuch\n",
+         "could not evaluate value: 2 * nonesuch"},
+        {"    - set:\n"
+         "        parameter: q1>length\n"
+         "        value: expr(2 * SELF>MagneticMultipoleP.Kn1)\n",
+         "a delayed value using SELF is evaluated once, as an immediate "
+         "expression"},
+    };
+    for (const Case& c : cases) {
+        INFO(c.set);
+        struct lattices lat =
+            expand_PALS_string(facility_file(defs + c.set, "ln").c_str(), nullptr);
+        INFO(joined(lat));
+        REQUIRE(any_contains(problem_messages(lat), c.message));
+        free_all(lat);
+    }
+}

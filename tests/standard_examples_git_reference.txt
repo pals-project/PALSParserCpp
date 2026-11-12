@@ -1,0 +1,9 @@
+# The commit of pals-project/pals that the standard_examples workflow checks
+# out and validates the examples corpus from. Pinning a fixed commit keeps
+# changes to the standard from breaking unrelated PALSParserCpp PRs. Bump it
+# by hand, in a PR of its own, together with any parser or manifest changes
+# the new examples need.
+#
+# The first non-comment line is the pin: a full commit SHA of
+# https://github.com/pals-project/pals
+c3ef168271f8a0faf4a48085cdf38a96f1093c4a

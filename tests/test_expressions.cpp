@@ -185,20 +185,19 @@ TEST_CASE("parse_and_expand_PALS evaluates expressions in the expanded tree",
     delete_tree(lat.adjunct);
 }
 
-TEST_CASE("parse_and_expand_PALS resolves map-form constants/variables",
+TEST_CASE("parse_and_expand_PALS resolves compact constants/variables",
           "[expr][lattices]") {
-    // The compact `constants:`/`variables:` block may be written as a plain map
-    // (`a_const: ...`) as well as the standard seq-of-single-key-maps form; a
-    // later definition must be able to reference an earlier one by name.
+    // The compact `constants:`/`variables:` lists (s:constants); a later
+    // definition must be able to reference an earlier one by name.
     const char* doc =
         "PALS:\n"
         "  facility:\n"
         "    - constants:\n"
-        "        a_const: 0.3 * r_electron\n"
-        "        b_const: 0.45\n"
+        "        - a_const: 0.3 * r_electron\n"
+        "        - b_const: 0.45\n"
         "    - variables:\n"
-        "        a_var: a_const^2\n"
-        "        b_var: 0.37 * atan2(0.1, 0.2)\n"
+        "        - a_var: a_const^2\n"
+        "        - b_var: 0.37 * atan2(0.1, 0.2)\n"
         "    - d1:\n"
         "        kind: Drift\n"
         "        length: a_const + b_const\n"
@@ -221,16 +220,16 @@ TEST_CASE("parse_and_expand_PALS resolves map-form constants/variables",
     // adjunct — evaluated all the same.
     YAMLNodeId consts = facility_param(lat.adjunct, "constants");
     REQUIRE(close(num_val(lat.adjunct,
-                          get_child_by_key(lat.adjunct, consts, "a_const")),
+                          compact_def(lat.adjunct, consts, "a_const")),
                   a_const));
 
-    // a_var references the map-form constant a_const defined above it.
+    // a_var references the constant a_const defined above it.
     YAMLNodeId vars = facility_param(lat.adjunct, "variables");
     REQUIRE(close(num_val(lat.adjunct,
-                          get_child_by_key(lat.adjunct, vars, "a_var")),
+                          compact_def(lat.adjunct, vars, "a_var")),
                   a_const * a_const));
 
-    // An element parameter may reference the map-form definitions too; this is
+    // An element parameter may reference the definitions too; this is
     // d1 as inlined into the expanded lattice.
     YAMLNodeId d1 = find_by_key(lat.full_expanded, "d1");
     REQUIRE(d1 != YAML_NULL_ID);
@@ -305,8 +304,8 @@ TEST_CASE("parse_and_expand_PALS resolves a species-name constant",
         "PALS:\n"
         "  facility:\n"
         "    - constants:\n"
-        "        species: \"#3He\"\n"
-        "        b_const: 0.45 * mass_of(species)\n"
+        "        - species: \"#3He\"\n"
+        "        - b_const: 0.45 * mass_of(species)\n"
         "    - DH1A:\n"
         "        kind: Bend\n"
         "        ReferenceP:\n"
@@ -331,7 +330,7 @@ TEST_CASE("parse_and_expand_PALS resolves a species-name constant",
 
     YAMLNodeId consts = facility_param(lat.adjunct, "constants");
     REQUIRE(close(num_val(lat.adjunct,
-                          get_child_by_key(lat.adjunct, consts, "b_const")),
+                          compact_def(lat.adjunct, consts, "b_const")),
                   0.45 * m_3he));
 
     YAMLNodeId dh1a = find_by_key(lat.full_expanded, "DH1A");
@@ -350,7 +349,7 @@ TEST_CASE("parse_and_expand_PALS resolves a species-name constant",
 
     // The species constant itself stays as its (string) species name.
     REQUIRE(val_eq(lat.adjunct,
-                   get_child_by_key(lat.adjunct, consts, "species"), "#3He"));
+                   compact_def(lat.adjunct, consts, "species"), "#3He"));
 
     // No spurious problems.
     REQUIRE(lat.problems.count == 0);

@@ -46,11 +46,24 @@ std::string strip_expr_wrapper(const std::string& s, bool& was_expr) {
     size_t b = s.find_last_not_of(" \t\r\n");
     if (a == std::string::npos) return "";
     std::string t = s.substr(a, b - a + 1);
-    const std::string pre = "expr(";
-    if (t.size() > pre.size() && t.compare(0, pre.size(), pre) == 0 &&
-        t.back() == ')') {
-        was_expr = true;
-        return t.substr(pre.size(), t.size() - pre.size() - 1);
+    // `expr` may be followed by whitespace before its `(`.
+    const std::string pre = "expr";
+    if (t.compare(0, pre.size(), pre) != 0) return t;
+    size_t open = t.find_first_not_of(" \t", pre.size());
+    if (open == std::string::npos || t[open] != '(' || t.back() != ')')
+        return t;
+    // The wrapper must enclose the entire expression (s:expressions): the `(`
+    // after `expr` has to close at the very end, so `expr(a) + expr(b)` is not
+    // a wrapped expression -- it is left whole, and the evaluator reports the
+    // misplaced `expr`.
+    int depth = 0;
+    for (size_t i = open; i < t.size(); ++i) {
+        if (t[i] == '(') ++depth;
+        else if (t[i] == ')' && --depth == 0) {
+            if (i != t.size() - 1) return t;
+            break;
+        }
     }
-    return t;
+    was_expr = true;
+    return t.substr(open + 1, t.size() - open - 2);
 }

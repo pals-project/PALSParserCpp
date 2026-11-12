@@ -106,7 +106,8 @@ TEST_CASE("Expansion preserves the key order of the source file", "[key_order]")
     REQUIRE(keys_of(lat.full_expanded, e_line) == expected_branch);
 
     // Merging `inherit: thingB` brings the parent's keys in ahead of the
-    // child's own, rather than sorting the merged result. `main_line` is a
+    // child's own, rather than sorting the merged result. The inheritance is
+    // done when `main_line` is defined, which spends the `inherit` key. `main_line` is a
     // `multipass` root line, so its one element also picks up a trailing
     // `multipass_index`, appended after the inherited keys. Finally, the element
     // bookkeeper appends its computed output groups (`ReferenceP`, `FloorP`),
@@ -117,9 +118,8 @@ TEST_CASE("Expansion preserves the key order of the source file", "[key_order]")
         lat.full_expanded, get_child_by_index(lat.full_expanded, line_seq, 0), 0);
     REQUIRE(key_eq(lat.full_expanded, thingZ, "thingZ"));
     const std::vector<std::string> inherited = {
-        "kind",           "length",     "inherit",    "multipass_index",
-        "ReferenceP",     "FloorP",     "s_position", "element_index",
-        "ShiftedFloorP"};
+        "kind",           "length",     "multipass_index", "ReferenceP",
+        "FloorP",         "s_position", "element_index",   "ShiftedFloorP"};
     REQUIRE(keys_of(lat.full_expanded, thingZ) == inherited);
     REQUIRE(val_eq(lat.full_expanded,
                    get_child_by_key(lat.full_expanded, thingZ, "multipass_index"),

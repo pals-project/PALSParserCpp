@@ -787,11 +787,11 @@ static void collect_const_var(const ryml::Tree& t, size_t named,
     if (named == ryml::NONE || !t.has_key(named)) return;
     std::string key = node_key_str(t, named);
     if (key == "constants" || key == "variables") {
-        // Compact form. The list of `name: value` pairs may be written either as
-        // a YAML sequence (each entry a single-key map) or as a plain map.
+        // Compact form: a list of single-key `name: value` maps.
+        if (!t.is_seq(named)) return;
         for (size_t e = t.first_child(named); e != ryml::NONE;
              e = t.next_sibling(e)) {
-            size_t item = t.has_key(e) ? e : t.first_child(e);
+            size_t item = t.first_child(e);
             if (item != ryml::NONE && t.has_key(item) &&
                 full_match(name_re, node_key_str(t, item)) &&
                 seen.insert(item).second)

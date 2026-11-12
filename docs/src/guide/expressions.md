@@ -23,13 +23,10 @@ numbers with the rest of the toolchain.
 
 ## Where the standard leaves a choice
 
-Two points the standard's function and constant lists do not settle, which this
-library therefore has to fix:
+The standard fixes the operator precedence (`^` right-associative, a unary
+sign looser than `^`, so `-2^2` is `-4` and `2^-1` is `0.5`). One point it does
+not settle, which this library therefore has to fix:
 
-- **Associativity and the unary sign.** `^` is right-associative, so `2^3^2` is
-  `2^(3^2) = 512`. A unary sign binds *looser* than `^`, so `-2^2` is
-  `-(2^2) = -4`, while a signed exponent still works (`2^-2` is `0.25`). This is
-  the Fortran/Bmad convention used across the ecosystem.
 - **Species names must be quoted.** `mass_of("proton")` is read; an unquoted
   name is an error. A mass number carries a leading `#` — `"#3He"`, not `"3He"`
   — matching
@@ -46,8 +43,27 @@ Only scalars that are genuine expressions are touched. Names that happen to sit
 where a value could go — element and line references in a `line:`, `kind:`
 names, booleans, a `MetaP` description — are not expressions and are left
 alone. Immediate expressions (`length: 0.3 * r_electron`) and delayed ones
-(`Kn1: expr(3.74 * a_var)`) both become numbers; in the expanded tree the
-distinction no longer matters.
+(`Kn1: expr(3.74 * a_var)`) both become numbers, but at different times:
+
+- An **immediate** expression is evaluated once, when its definition is reached
+  in the `facility` list. A `set` further down the list does not change it,
+  even when it writes a parameter the expression uses. What it cannot evaluate
+  yet — a parameter only expansion computes — is evaluated after expansion.
+- A **delayed** expression is evaluated after expansion and again after the
+  `post_expansion` list, so it follows a `post_expansion` set on a parameter it
+  uses. A `set` whose value is delayed stores the expression rather than its
+  value. Control expressions are delayed by definition.
+
+The `expr(...)` wrapper must enclose the whole expression; `2 * expr(a)` is
+reported. A constant may not be delayed, and a controller variable's initial
+value may not be either.
+
+Inheritance follows the same order. An `inherit` (of an element, a group, or
+another element's group, `q1>ApertureP`) copies the values the source has when
+the inheriting definition is reached, and a line item keyed by a defined
+element (`- q1: {length: 0.3}`) is an instance of it, copied when the line is
+defined. Neither is touched by a later `set` on the source. A bare reference
+(`- q1`) is the definition itself and does follow such a set.
 
 A value that fails to evaluate is left as text rather than aborting the
 expansion, and it is reported as a problem *only if it looks like one* — an
@@ -59,10 +75,11 @@ or free-form prose that could otherwise collide with a constant or parse as
 arithmetic — `kind`, `use` and `inherit`, the fork targets, and the `authors`,
 `notes` and `reminders` prose among them.
 
-Definitions are resolved in dependency order, so a value may reference one
-written later in the file as readily as one written earlier. A reference that
-cannot be resolved, or a genuine cycle, leaves the value as text and is
-reported.
+Constants and variables are resolved in dependency order, so a value may
+reference one written later in the file as readily as one written earlier. A
+reference that cannot be resolved, or a genuine cycle, leaves the value as text
+and is reported. Nothing in `facility` may use a constant, variable or
+controller defined in `post_expansion`.
 
 ### Randomness is deferred, never invented
 
@@ -145,18 +162,18 @@ Which list a set sits in decides what it writes:
 - A set in `post_expansion` acts on the already-expanded lattice, so each copy
   is a separate element and is written separately. The bookkeeper has already
   run at this point, so a value may use computed parameters such as
-  `SELF.s_position`.
+  `SELF>s_position`.
 
 ## The order of the passes
 
 ```text
-facility sets
+facility list, in order: inherits, immediate expressions, sets
   → branch and fork expansion
-  → expression evaluation
+  → expression evaluation (the rest, delayed ones included)
   → ABSOLUTE controllers
   → element bookkeeper
   → post_expansion sets
-  → expression evaluation
+  → delayed expressions evaluated again
   → ABSOLUTE controllers again
   → element bookkeeper again
 ```

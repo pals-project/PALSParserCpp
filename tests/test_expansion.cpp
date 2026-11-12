@@ -413,7 +413,7 @@ TEST_CASE("parse_and_expand_PALS reports expansion problems",
         "PALS:\n"
         "  facility:\n"
         "    - constants:\n"
-        "        a_const: 0.3 * undefined_thing\n"
+        "        - a_const: 0.3 * undefined_thing\n"
         "    - thingB:\n"
         "        kind: Sextupole\n"
         "        MagneticMultipoleP:\n"

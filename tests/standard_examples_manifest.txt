@@ -47,12 +47,7 @@ lenient  136  alsinj.pals.yaml
 # `phase_space_coordinates: standard` is not one of its settings
 # (coordinates.md).
 lenient  3    unit_tests/document/root_keys.pals.yaml
-# A `set` names an element defined inside a line without qualifying it, so it
-# matches nothing (names.md: before expansion an unqualified name reaches only
-# definitions directly under `facility`). set_pattern also writes `SELF.` for
-# `SELF>`.
-lenient  5    modular_machine/joiner.pals.yaml
-lenient  3    unit_tests/loading/basic/joiner.pals.yaml
+# The set's value writes `SELF.` for `SELF>`.
 lenient  5    unit_tests/sets/set_pattern.pals.yaml
 
 # Joiners of the deliberately minimal load families: their combined documents

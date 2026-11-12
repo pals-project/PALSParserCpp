@@ -49,9 +49,11 @@
 //
 // What an unqualified name reaches depends on the tree. In an expanded lattice
 // it reaches the elements of the lattice. Before expansion -- a tree holding a
-// `PALS` node -- it reaches the element definitions standing under `facility`
-// (or `post_expansion`), not the elements written inside a beamline's `line`;
-// those answer only to a name qualified by the beamline that holds them.
+// `PALS` node -- it reaches the element definitions: those standing under
+// `facility` (or `post_expansion`) and those defined in place in a beamline's
+// `line`, with a `kind` or an `inherit` of their own (names.md). A line item
+// that only uses an element defined elsewhere answers only to a name qualified
+// by the beamline that holds it.
 
 // Compile a PCRE2 pattern. Returns nullptr on error (message to stderr).
 static pcre2_code* compile_pattern(const std::string& pat) {
@@ -552,9 +554,38 @@ static void collect_expanded(const ryml::Tree& t, size_t node,
         collect_expanded(t, c, cur_lattice, pop);
 }
 
+// The elements defined in place in the `line` and `elements` lists below
+// `def` (names.md): items with a `kind` or an `inherit` of their own. An item
+// that only uses an element defined elsewhere is not one.
+static void collect_in_place(const ryml::Tree& t, size_t def,
+                             std::vector<Candidate>& out) {
+    for (size_t c = t.first_child(def); c != ryml::NONE; c = t.next_sibling(c)) {
+        if (!t.is_seq(c) || !t.has_key(c)) continue;
+        std::string key = node_key_str(t, c);
+        if (key != "line" && key != "elements") continue;
+        for (size_t w = t.first_child(c); w != ryml::NONE; w = t.next_sibling(w)) {
+            if (!t.is_map(w)) continue;
+            size_t item = t.first_child(w);
+            if (item == ryml::NONE || !t.has_key(item) || !t.is_map(item))
+                continue;
+            bool defines =
+                t.find_child(item, ryml::to_csubstr("kind")) != ryml::NONE ||
+                t.find_child(item, ryml::to_csubstr("inherit")) != ryml::NONE;
+            if (defines && is_element_def(t, item)) {
+                Candidate cand;
+                cand.node = item;
+                cand.name = node_key_str(t, item);
+                out.push_back(std::move(cand));
+            }
+            collect_in_place(t, item, out);
+        }
+    }
+}
+
 // The pre-expansion population of a list of `facility`/`post_expansion`
-// entries: their element definitions, reached by unqualified names, and the
-// lines of their BeamLines, reached by beamline-qualified names.
+// entries: their element definitions, reached by unqualified names -- those
+// directly in the list and those defined in place in a line (names.md) -- and
+// the lines of their BeamLines, reached by beamline-qualified names.
 static void collect_definitions(const ryml::Tree& t,
                                 const std::vector<size_t>& entries,
                                 Population& pop) {
@@ -576,6 +607,7 @@ static void collect_definitions(const ryml::Tree& t,
             c.name = node_key_str(t, def);
             pop.defs.push_back(std::move(c));
         }
+        collect_in_place(t, def, pop.defs);
         size_t line = t.find_child(def, ryml::to_csubstr("line"));
         if (line == ryml::NONE || !t.is_seq(line)) continue;
         std::vector<Candidate> cur;

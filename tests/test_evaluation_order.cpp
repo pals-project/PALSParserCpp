@@ -3,8 +3,8 @@
 // When things are evaluated and copied during lattice expansion
 // (lattice-construction.md, s:lattice.expand): immediate expressions at their
 // place in the `facility` list, `expr(...)` delayed ones after
-// `post_expansion`; inheritance and line-item instances at definition time
-// (lattice-elements.md, beamlines.md). Also the rules on where constants and
+// `post_expansion`; inheritance at definition time, and line items that only
+// use an element at branch expansion (lattice-elements.md, beamlines.md). Also the rules on where constants and
 // variables live and what they may be defined with
 // (parameter-values-and-controllers.md, s:constants, s:expressions, s:set).
 
@@ -257,13 +257,34 @@ TEST_CASE("a parameter group inherits from another element's group",
     free_all(lat);
 }
 
+// The element of line item `i` (counting `begin` as 0) of branch `ln`.
+static YAMLNodeId line_item(YAMLTreeHandle t, size_t i) {
+    YAMLNodeId ln = find_by_key(t, "ln");
+    REQUIRE(ln != YAML_NULL_ID);
+    YAMLNodeId wrapper =
+        get_child_by_index(t, get_child_by_key(t, ln, "line"), i);
+    REQUIRE(wrapper != YAML_NULL_ID);
+    return get_child_by_index(t, wrapper, 0);
+}
+
+static double item_param(YAMLTreeHandle t, size_t i, const char* group,
+                  const char* p) {
+    YAMLNodeId e = line_item(t, i);
+    YAMLNodeId g = group ? get_child_by_key(t, e, group) : e;
+    REQUIRE(g != YAML_NULL_ID);
+    YAMLNodeId v = get_child_by_key(t, g, p);
+    REQUIRE(v != YAML_NULL_ID);
+    return num_val(t, v);
+}
+
 TEST_CASE("a keyed line item is an instance of the element it names",
           "[lattices][line]") {
-    // beamlines.md: `- thingB: {length: 0.45}` refers to thingB defined
-    // elsewhere, with a value of its own. A group the instance sets one
-    // parameter of keeps the definition's others. The instance takes the
-    // definition as it stands when the line is defined (names.md): a later set
-    // on thingB does not reach it, while the bare reference does follow.
+    // beamlines.md: `- thingB: {length: 0.45}` uses thingB defined elsewhere,
+    // with a value of its own. A group the instance sets one parameter of
+    // keeps the definition's others. A line item that only uses an element
+    // gets the element's parameters at branch expansion (names.md,
+    // lattice-elements.md), so a set on thingB after the line is defined
+    // reaches it, except where it has a value of its own.
     const std::string doc = file(
         "    - thingB:\n"
         "        kind: Sextupole\n"
@@ -276,42 +297,105 @@ TEST_CASE("a keyed line item is an instance of the element it names",
         "              MagneticMultipoleP:\n"
         "                Kn2L: 0.6\n"
         "          - thingB\n");
-    // Put the set after the line definition.
+    // Put the sets after the line definition.
     std::string with_set = doc;
     with_set.insert(with_set.find("    - lat1:"),
-                    "    - set:\n"
-                    "        parameter: thingB>length\n"
-                    "        value: 0.8\n");
+                    "    - sets:\n"
+                    "        - thingB>length: 0.8\n"
+                    "        - thingB>MagneticMultipoleP.tilt2: 0.3\n");
 
     struct lattices lat = expand_PALS_string(with_set.c_str(), nullptr);
     INFO(joined(lat));
     REQUIRE(lat.problems.count == 0);
-    // The line's second entry, after `begin`.
-    YAMLNodeId ln = find_by_key(lat.full_expanded, "ln");
-    YAMLNodeId first = get_child_by_index(
-        lat.full_expanded,
-        get_child_by_index(lat.full_expanded,
-                           get_child_by_key(lat.full_expanded, ln, "line"), 1),
-        0);
+    YAMLNodeId first = line_item(lat.full_expanded, 1);
     REQUIRE(key_eq(lat.full_expanded, first, "thingB"));
     REQUIRE(val_eq(lat.full_expanded,
                    get_child_by_key(lat.full_expanded, first, "kind"), "Sextupole"));
-    REQUIRE(close(num_val(lat.full_expanded,
-                          get_child_by_key(lat.full_expanded, first, "length")),
-                  0.45));
-    YAMLNodeId mm = get_child_by_key(lat.full_expanded, first, "MagneticMultipoleP");
-    REQUIRE(close(num_val(lat.full_expanded,
-                          get_child_by_key(lat.full_expanded, mm, "Kn2L")),
+    REQUIRE(close(item_param(lat.full_expanded, 1, nullptr, "length"), 0.45));
+    REQUIRE(close(item_param(lat.full_expanded, 1, "MagneticMultipoleP", "Kn2L"),
                   0.6));
-    REQUIRE(close(num_val(lat.full_expanded,
-                          get_child_by_key(lat.full_expanded, mm, "tilt2")),
-                  0.1));
+    REQUIRE(close(item_param(lat.full_expanded, 1, "MagneticMultipoleP", "tilt2"),
+                  0.3));
     // The bare reference is the definition, set and all: placed after the
     // 0.45 m instance, it starts at s = 0.45 and is 0.8 m long.
     YAMLNodeId end = find_by_key(lat.full_expanded, "branch_end");
     REQUIRE(close(num_val(lat.full_expanded,
                           get_child_by_key(lat.full_expanded, end, "s_position")),
                   1.25));
+    free_all(lat);
+}
+
+TEST_CASE("a keyed line item may use an element defined after the line",
+          "[lattices][line]") {
+    // The item only uses Q9; it gets Q9's parameters at branch expansion, by
+    // which time the whole facility list has been walked.
+    const std::string doc = file(
+        "",
+        "          - Q9:\n"
+        "              length: 0.2\n");
+    std::string with_def = doc;
+    with_def.insert(with_def.find("    - lat1:"),
+                    "    - Q9:\n"
+                    "        kind: Quadrupole\n"
+                    "        length: 0.5\n"
+                    "        MagneticMultipoleP:\n"
+                    "          Kn1: 0.4\n");
+
+    struct lattices lat = expand_PALS_string(with_def.c_str(), nullptr);
+    INFO(joined(lat));
+    REQUIRE(lat.problems.count == 0);
+    REQUIRE(val_eq(lat.full_expanded,
+                   get_child_by_key(lat.full_expanded,
+                                    line_item(lat.full_expanded, 1), "kind"),
+                   "Quadrupole"));
+    REQUIRE(close(item_param(lat.full_expanded, 1, nullptr, "length"), 0.2));
+    REQUIRE(close(item_param(lat.full_expanded, 1, "MagneticMultipoleP", "Kn1"),
+                  0.4));
+    free_all(lat);
+}
+
+TEST_CASE("before branch expansion a name matches elements defined in a line",
+          "[lattices][line][sets]") {
+    // The example of names.md (s:names): an unqualified name matches the
+    // construct that defines the element -- under `facility` or in place in a
+    // line -- but not a line item that only uses it. Q2, defined in place by
+    // inheriting from Q1, inherits immediately, before the sets.
+    const std::string doc = file(
+        "    - Q1:\n"
+        "        kind: Quadrupole\n"
+        "        length: 0.5\n"
+        "        MagneticMultipoleP:\n"
+        "          Bs1: 0.2\n",
+        "          - Q1\n"
+        "          - Q1:\n"
+        "              MagneticMultipoleP:\n"
+        "                Bs1: 0.7\n"
+        "          - Q2:\n"
+        "              inherit: Q1\n"
+        "          - S2:\n"
+        "              kind: Sextupole\n"
+        "              length: 0.1\n"
+        "          - S2\n");
+    std::string with_sets = doc;
+    with_sets.insert(with_sets.find("    - lat1:"),
+                     "    - sets:\n"
+                     "        - Q1>MagneticMultipoleP.Bs1: 0.45\n"
+                     "        - S2>length: 0.3\n");
+
+    struct lattices lat = expand_PALS_string(with_sets.c_str(), nullptr);
+    INFO(joined(lat));
+    REQUIRE(lat.problems.count == 0);
+    REQUIRE(key_eq(lat.full_expanded, line_item(lat.full_expanded, 1), "Q1"));
+    REQUIRE(close(item_param(lat.full_expanded, 1, "MagneticMultipoleP", "Bs1"),
+                  0.45));
+    REQUIRE(close(item_param(lat.full_expanded, 2, "MagneticMultipoleP", "Bs1"),
+                  0.7));
+    REQUIRE(key_eq(lat.full_expanded, line_item(lat.full_expanded, 3), "Q2"));
+    REQUIRE(close(item_param(lat.full_expanded, 3, "MagneticMultipoleP", "Bs1"),
+                  0.2));
+    REQUIRE(key_eq(lat.full_expanded, line_item(lat.full_expanded, 4), "S2"));
+    REQUIRE(close(item_param(lat.full_expanded, 4, nullptr, "length"), 0.3));
+    REQUIRE(close(item_param(lat.full_expanded, 5, nullptr, "length"), 0.3));
     free_all(lat);
 }
 

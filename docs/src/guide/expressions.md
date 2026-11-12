@@ -60,10 +60,12 @@ value may not be either.
 
 Inheritance follows the same order. An `inherit` (of an element, a group, or
 another element's group, `q1>ApertureP`) copies the values the source has when
-the inheriting definition is reached, and a line item keyed by a defined
-element (`- q1: {length: 0.3}`) is an instance of it, copied when the line is
-defined. Neither is touched by a later `set` on the source. A bare reference
-(`- q1`) is the definition itself and does follow such a set.
+the inheriting definition is reached, whether that definition stands under
+`facility` or in place in a line (`- q2: {inherit: q1}`). A later `set` on the
+source does not touch it. A line item that only uses an element (`- q1`, or
+`- q1: {length: 0.3}` with values of its own) gets the element's parameters at
+branch expansion, so it does follow such a set, except where it sets a value
+itself.
 
 A value that fails to evaluate is left as text rather than aborting the
 expansion, and it is reported as a problem *only if it looks like one* — an
@@ -155,10 +157,12 @@ Which list a set sits in decides what it writes:
 
 - A set in `facility` acts on the element *definitions*, and only on those
   defined earlier in the list — an element defined after it is untouched. An
-  unqualified name reaches the definitions standing under `facility`, not the
-  elements written inside a beamline's `line`; those answer to a name qualified
-  by their beamline (`myline>>q1`). One definition is written once, so every
-  copy of a repeated element inherits the same value.
+  unqualified name reaches the construct that defines the element, whether it
+  stands under `facility` or is defined in place in a beamline's `line` (it has
+  a `kind` or an `inherit` of its own). It does not reach a line item that only
+  uses an element defined elsewhere; that answers to a name qualified by its
+  beamline (`myline>>q1`). One definition is written once, so every use of it
+  gets the same value.
 - A set in `post_expansion` acts on the already-expanded lattice, so each copy
   is a separate element and is written separately. The bookkeeper has already
   run at this point, so a value may use computed parameters such as

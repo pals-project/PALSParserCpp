@@ -1663,6 +1663,22 @@ static void set_num_child(ryml::Tree& t, size_t parent, const char* key,
     t.set_val(c, t.to_arena(ryml::to_csubstr(format_double(v))));
 }
 
+// Link a parameter a `set` or a controller has written (`written`) back to the
+// node holding the expression that wrote it (`writer`): the parameter's value
+// now comes from there, and what it held before is no longer relevant. The
+// correspondence map then leads from the parameter to that expression, so a
+// program can tell, for instance, whether it was delayed. A writer with no
+// provenance of its own leaves the parameter unlinked.
+static void link_to_writer(size_t written, size_t writer,
+                           std::map<size_t, size_t>& prov) {
+    if (written == ryml::NONE) return;
+    auto w = writer == ryml::NONE ? prov.end() : prov.find(writer);
+    if (w == prov.end())
+        prov.erase(written);
+    else
+        prov[written] = w->second;
+}
+
 // Overwrite a scalar value node in place with a number.
 static void set_scalar_num(ryml::Tree& t, size_t node, double v) {
     t.set_val(node, t.to_arena(ryml::to_csubstr(format_double(v))));
@@ -2233,6 +2249,9 @@ struct CtrlTarget {
     // interdependent family are ordered by it: the later write is the one that
     // states the quantity, and it nullifies the earlier.
     size_t seq = 0;
+    // The `expression` node of the first ABSOLUTE control reaching this
+    // parameter, which the driven parameter is linked back to.
+    size_t expr_node = ryml::NONE;
 };
 
 // Evaluates the controllers and applies them to the expanded lattice.
@@ -2492,6 +2511,7 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
                 CtrlTarget& tg = targets[{def, path}];
                 tg.seq = seq;
                 if (c.absolute) {
+                    if (!tg.has_absolute) tg.expr_node = cc.expr_node;
                     tg.has_absolute = true;
                     if (cc.ok)
                         tg.sum += cc.value;
@@ -2553,6 +2573,8 @@ static void evaluate_controllers(ryml::Tree& t, size_t lat_node,
         for (size_t i = 0; i + 1 < path.size(); ++i)
             parent = find_or_add_map_child(t, parent, path[i].c_str());
         set_num_child(t, parent, path.back().c_str(), tg.sum);
+        link_to_writer(t.find_child(parent, ryml::to_csubstr(path.back())),
+                       tg.expr_node, prov);
         // The controller states this member of its family; what the element
         // definition, or a control reached earlier, said through another member
         // is nullified rather than left to be flagged as inconsistent.
@@ -3086,6 +3108,10 @@ static bool read_set_operand(const ryml::Tree& t, size_t ele,
 struct SetCommand {
     std::string param;   // `parameter`: the name-matching target
     std::string value;   // `value`: the expression to write
+    // The node holding `value`: what the written parameter is linked back to
+    // (its provenance), so the correspondence map leads from the parameter to
+    // the expression that set it rather than to the value it replaced.
+    size_t value_node = ryml::NONE;
     double abs_error = 0.0;
     double rel_error = 0.0;
     bool has_error = false;
@@ -3264,6 +3290,8 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
                             ("expr(" + delayed_body + ")").c_str());
         else
             set_num_child(t, parent, tg.key.c_str(), r.value);
+        link_to_writer(t.find_child(parent, ryml::to_csubstr(tg.key)),
+                       cmd.value_node, prov);
         if (written) written->push_back(tg);
         // This write nullifies the previous settings of the rest of the family:
         // whatever the definition stated before expansion, and -- after it --
@@ -3278,6 +3306,7 @@ static bool read_set_command(const ryml::Tree& t, size_t node, SetCommand& cmd,
                              ProblemList& problems) {
     cmd.param = child_val_str(t, node, "parameter");
     cmd.value = child_val_str(t, node, "value");
+    cmd.value_node = t.find_child(node, ryml::to_csubstr("value"));
     if (cmd.param.empty()) {
         add_problem(problems, "set: no `parameter` target");
         return false;
@@ -3322,6 +3351,7 @@ static std::vector<SetCommand> entry_set_commands(const ryml::Tree& t,
         SetCommand cmd;
         cmd.param.assign(t.key(kv).str, t.key(kv).len);
         cmd.value.assign(t.val(kv).str, t.val(kv).len);
+        cmd.value_node = kv;
         out.push_back(std::move(cmd));
     };
     if (t.is_map(c)) {
@@ -5722,6 +5752,23 @@ YAML_API struct correspondence_map build_correspondence_map(
         std::copy(links.begin(), links.end(), out.links);
     }
     return out;
+}
+
+YAML_API YAMLNodeId original_node(YAMLTreeHandle combined, YAMLTreeHandle tree,
+                                  YAMLNodeId node) {
+    if (!combined || !tree || node == YAML_NULL_ID) return YAML_NULL_ID;
+    const std::map<size_t, size_t>& c2o =
+        static_cast<ParsedData*>(combined)->provenance;
+    size_t c = node;
+    if (tree != combined) {
+        const std::map<size_t, size_t>& d2c =
+            static_cast<ParsedData*>(tree)->provenance;
+        auto dc = d2c.find(node);
+        if (dc == d2c.end()) return YAML_NULL_ID;
+        c = dc->second;
+    }
+    auto co = c2o.find(c);
+    return co == c2o.end() ? YAML_NULL_ID : co->second;
 }
 
 YAML_API void free_correspondence_map(struct correspondence_map map) {

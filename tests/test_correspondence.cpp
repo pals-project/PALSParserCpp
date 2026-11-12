@@ -209,3 +209,121 @@ TEST_CASE("build_correspondence_map maps one source to many expanded copies",
     delete_tree(lat.full_expanded);
     delete_tree(lat.adjunct);
 }
+
+namespace {
+
+// The `original` text `group.param` of the element at `index` of the first
+// branch line of `tree` came from, or "" when it has none.
+std::string source_text(const struct lattices& lat, YAMLTreeHandle tree,
+                        size_t index, const char* group, const char* param) {
+    YAMLNodeId lat1 = get_child_by_index(tree, get_root(tree), 0);
+    YAMLNodeId branch = get_child_by_index(
+        tree, get_child_by_index(tree, get_child_by_key(tree, lat1, "branches"), 0),
+        0);
+    YAMLNodeId ele = get_child_by_index(
+        tree, get_child_by_index(tree, get_child_by_key(tree, branch, "line"), index),
+        0);
+    YAMLNodeId g = group ? get_child_by_key(tree, ele, group) : ele;
+    YAMLNodeId v = get_child_by_key(tree, g, param);
+    REQUIRE(v != YAML_NULL_ID);
+    YAMLNodeId o = original_node(lat.combined, tree, v);
+    if (o == YAML_NULL_ID) return "";
+    char* s = as_string(lat.original, o);
+    std::string out = s ? s : "";
+    yaml_free_string(s);
+    return out;
+}
+
+const char* WRITERS_DOC =
+    "PALS:\n"
+    "  facility:\n"
+    "    - q1:\n"
+    "        kind: Quadrupole\n"
+    "        MagneticMultipoleP:\n"
+    "          Kn1: 0.5\n"
+    "    - q2:\n"
+    "        kind: Quadrupole\n"
+    "        MagneticMultipoleP:\n"
+    "          Kn1: expr(2 * q1>MagneticMultipoleP.Kn1)\n"
+    "    - q3:\n"
+    "        kind: Quadrupole\n"
+    "        MagneticMultipoleP:\n"
+    "          Kn1: 0.1\n"
+    "    - q4:\n"
+    "        kind: Quadrupole\n"
+    "        MagneticMultipoleP:\n"
+    "          Kn1: expr(0.2)\n"
+    "    - q5:\n"
+    "        kind: Quadrupole\n"
+    "        MagneticMultipoleP:\n"
+    "          Kn1: 0.3\n"
+    "    - q6:\n"
+    "        kind: Quadrupole\n"
+    "    - set:\n"
+    "        parameter: q3>MagneticMultipoleP.Kn1\n"
+    "        value: expr(3 * q1>MagneticMultipoleP.Kn1)\n"
+    "    - sets:\n"
+    "        - q4>MagneticMultipoleP.Kn1: 0.4\n"
+    "    - ps1:\n"
+    "        kind: Controller\n"
+    "        variables:\n"
+    "          cur: 0.25\n"
+    "        controls:\n"
+    "          - parameter: q6>MagneticMultipoleP.Kn1\n"
+    "            expression: 2 * cur\n"
+    "    - ln:\n"
+    "        kind: BeamLine\n"
+    "        line:\n"
+    "          - begin:\n"
+    "              kind: BeginningEle\n"
+    "              ReferenceP: {species_ref: electron, E_tot_ref: 1.0e9}\n"
+    "          - q1\n"
+    "          - q2\n"
+    "          - q3\n"
+    "          - q4\n"
+    "          - q5\n"
+    "          - q6\n"
+    "    - lat1:\n"
+    "        kind: Lattice\n"
+    "        branches:\n"
+    "          - ln\n"
+    "    - use: lat1\n"
+    "  post_expansion:\n"
+    "    - set:\n"
+    "        parameter: q5>MagneticMultipoleP.Kn1\n"
+    "        value: expr(q1>MagneticMultipoleP.Kn1 + 0.1)\n";
+
+}  // namespace
+
+TEST_CASE("original_node leads a value to the text it was evaluated from",
+          "[correspondence]") {
+    // A value that no set or controller wrote leads to its own text; one that
+    // was written leads to the text that wrote it -- a facility or
+    // post_expansion `set` value, a compact `sets` value, a controller
+    // expression -- never to the value it replaced.
+    struct lattices lat = expand_PALS_string(WRITERS_DOC, nullptr);
+    REQUIRE(lat.problems.count == 0);
+
+    for (YAMLTreeHandle tree : {lat.full_expanded, lat.expanded}) {
+        const char* g = "MagneticMultipoleP";
+        REQUIRE(source_text(lat, tree, 1, g, "Kn1") == "0.5");
+        REQUIRE(source_text(lat, tree, 2, g, "Kn1") ==
+                "expr(2 * q1>MagneticMultipoleP.Kn1)");
+        REQUIRE(source_text(lat, tree, 3, g, "Kn1") ==
+                "expr(3 * q1>MagneticMultipoleP.Kn1)");
+        REQUIRE(source_text(lat, tree, 4, g, "Kn1") == "0.4");
+        REQUIRE(source_text(lat, tree, 5, g, "Kn1") ==
+                "expr(q1>MagneticMultipoleP.Kn1 + 0.1)");
+        REQUIRE(source_text(lat, tree, 6, g, "Kn1") == "2 * cur");
+    }
+
+    // A value the parser computed has no source.
+    REQUIRE(source_text(lat, lat.full_expanded, 1, "FloorP", "z") == "");
+
+    free_lattice_problems(lat.problems);
+    delete_tree(lat.original);
+    delete_tree(lat.combined);
+    delete_tree(lat.expanded);
+    delete_tree(lat.full_expanded);
+    delete_tree(lat.adjunct);
+}

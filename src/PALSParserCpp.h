@@ -396,6 +396,29 @@ YAML_API struct correspondence_map build_correspondence_map(
     YAMLTreeHandle full_expanded, YAMLTreeHandle adjunct);
 
 /**
+ * The node of the `original` tree that `node` came from: the text it was
+ * written as. For an evaluated parameter that is the expression it was
+ * evaluated from, so a program can tell, for instance, whether it was delayed
+ * (`expr(...)`). A parameter written by a `set` or driven by an ABSOLUTE
+ * controller leads to that set's `value` or that controller's `expression`
+ * (the first ABSOLUTE one, when several sum) -- the text that gave it its
+ * value -- not to the value it replaced.
+ * @ingroup correspond
+ *
+ * Unlike build_correspondence_map(), this answers for one node and also takes
+ * the `expanded` tree.
+ *
+ * @param combined The `combined` tree of the same parse_and_expand_PALS() call.
+ * @param tree     The tree `node` is in: `expanded`, `full_expanded`,
+ *                 `adjunct` or `combined`.
+ * @param node     The node.
+ * @return The node in `original`, or YAML_NULL_ID when `node` has no source --
+ *         a value the parser computed, such as a FloorP coordinate.
+ */
+YAML_API YAMLNodeId original_node(YAMLTreeHandle combined, YAMLTreeHandle tree,
+                                  YAMLNodeId node);
+
+/**
  * Frees the link array owned by a correspondence_map. Passing a map with a NULL
  * `links` pointer is safe and has no effect.
  * @ingroup correspond

@@ -268,6 +268,23 @@ A node the expansion *created* — a `ReferenceP`, an `element_index`, a
 That is the correspondence map's answer to "where did this come from": nowhere,
 it was computed.
 
+### The expression behind a value
+
+Every value in the expanded trees is a number. To see what it was written as,
+`original_node(combined, tree, node)` returns the node of `original` it came
+from, for a node of `expanded`, `full_expanded`, `adjunct` or `combined`:
+
+```cpp
+YAMLNodeId src = original_node(lat.combined, lat.expanded, kn1);
+char* text = as_string(lat.original, src);   // e.g. "expr(2 * q1>MagneticMultipoleP.Kn1)"
+```
+
+That is how a program tells whether a value was delayed (`expr(...)`) or
+immediate. A value written by a `set` leads to that set's `value`, and one
+driven by an ABSOLUTE controller to the controller's `expression` (the first
+one, when several sum): the text that gave the value, not the value it
+replaced. A value the parser computed returns `YAML_NULL_ID`.
+
 ## Problems
 
 Expansion does not abort on a recoverable problem. Instead it leaves the

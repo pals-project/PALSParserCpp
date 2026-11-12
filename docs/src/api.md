@@ -41,8 +41,8 @@ The opaque handles and sentinel values shared across the API.
 
 ## Parsing & expansion
 
-Read PALS/YAML from disk or memory and expand a lattice into its four
-representations (`original`, `combined`, `expanded`, `adjunct`).
+Read PALS/YAML from disk or memory and expand a lattice into its five
+representations (`original`, `combined`, `expanded`, `full_expanded`, `adjunct`).
 
 ```{doxygengroup} parse
 :project: PALSParserCpp

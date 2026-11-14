@@ -179,11 +179,12 @@ void evaluate_expressions(
 // pals_controllers.cpp: evaluate the controllers, from the top of their
 // hierarchy down, against the global symbols `global`, and apply the ABSOLUTE
 // ones to the parameters they drive in the lattice `lat_node` (ryml::NONE
-// evaluates without applying). Called by evaluate_expressions.
+// evaluates without applying). Each control `expression` keeps its text, and
+// the number it gives is written beside it as `value`. Called by
+// evaluate_expressions.
 void evaluate_controllers(ryml::Tree& t, size_t lat_node,
                           const EvalContext& global, Provenance& prov,
                           ProblemList& problems,
-                          std::vector<DelayedValue>* delayed,
                           std::map<size_t, std::vector<size_t>>* drivers);
 
 // Put back the `expr(...)` text of the delayed values the first evaluation

@@ -600,7 +600,7 @@ void evaluate_expressions(ryml::Tree& t, size_t lat_node, Provenance& prov,
                           std::vector<DelayedValue>* delayed,
                           std::map<size_t, std::vector<size_t>>* drivers) {
     EvalContext ctx = make_expression_context(t, lat_node);
-    evaluate_controllers(t, lat_node, ctx, prov, problems, delayed, drivers);
+    evaluate_controllers(t, lat_node, ctx, prov, problems, drivers);
     SubstituteMode mode;
     mode.delayed = delayed;
     substitute_values(t, t.root_id(), ctx, problems, mode);

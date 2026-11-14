@@ -230,6 +230,43 @@ TEST_CASE("a misspelled element parameter is reported", "[check][problems]") {
     REQUIRE(count_with(ps, "unknown parameter") == 1);
 }
 
+TEST_CASE("line-item components on an element defined in a line are accepted",
+          "[check][problems]") {
+    // beamlines.md, s:beamline.components: a line item can have `repeat`,
+    // `direction` and `placement`, and that includes an item that defines its
+    // element in place. Only `direction` used to be accepted there, so a
+    // `repeat` or `placement` on such an item was reported as an unknown
+    // parameter.
+    auto ps = problems_for("PALS:\n"
+                           "  facility:\n"
+                           "    - begin:\n"
+                           "        kind: BeginningEle\n"
+                           "        ReferenceP:\n"
+                           "          species_ref: \"electron\"\n"
+                           "          E_tot_ref: 1.0e9\n"
+                           "    - my_line:\n"
+                           "        kind: BeamLine\n"
+                           "        line:\n"
+                           "          - begin\n"
+                           "          - q1:\n"
+                           "              kind: Quadrupole\n"
+                           "              repeat: 3\n"
+                           "              length: 0.8\n"
+                           "          - q2:\n"
+                           "              kind: Quadrupole\n"
+                           "              length: 0.5\n"
+                           "              direction: -1\n"
+                           "              placement:\n"
+                           "                offset: 1.0\n"
+                           "    - lat1:\n"
+                           "        kind: Lattice\n"
+                           "        branches:\n"
+                           "          - my_line\n"
+                           "    - use: \"lat1\"\n");
+
+    REQUIRE(count_with(ps, "unknown parameter") == 0);
+}
+
 TEST_CASE("the components of a BeamLine are all accepted",
           "[check][problems]") {
     // The full component list of a BeamLine (beamlines.md,

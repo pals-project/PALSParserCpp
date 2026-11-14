@@ -320,13 +320,14 @@ bool is_multipole_param(const std::string& group, const std::string& key) {
 
 // The parameters an element of `kind` may carry outside any parameter group:
 // the ones that fit no group (lattice-element-parameters.md, s:non.params),
-// `inherit` and the line-item modifiers usable on an element defined in place,
+// `inherit` and the line-item components usable on an element defined in place
+// (`direction`, `placement`, `repeat`; beamlines.md, s:beamline.components),
 // and then whatever the kind itself is built from.
 const std::set<std::string>& element_params(const std::string& kind) {
     static const std::set<std::string> base = {
         "is_on",  "kind",      "length",          "name",
-        "s_position", "inherit", "direction",     "multipass_index",
-        "element_index"};
+        "s_position", "inherit", "direction",     "placement",
+        "repeat", "multipass_index", "element_index"};
     static const std::set<std::string> beamline = [] {
         std::set<std::string> s = base;
         s.insert({"line", "multipass", "zero_point", "periodic", "repeat"});

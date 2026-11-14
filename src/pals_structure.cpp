@@ -362,8 +362,11 @@ bool Expander::expand_repeat(size_t seq, size_t child, size_t entry,
     // itself is gone.
     size_t before = t.prev_sibling(child);
     size_t after = before;
-    // A repeated beamline with a line has that line duplicated `copies` times;
-    // anything else has its definition duplicated `copies` times.
+    // A repeated beamline with a line has that line duplicated `copies` times.
+    // Anything else has the line item itself duplicated `copies` times, minus
+    // its `repeat`: the copies are what writing the item out `copies` times
+    // would give (beamlines.md, s:repetition), so each keeps the values the
+    // item sets and gets the rest from the definition when it is expanded.
     if (line_id != ryml::NONE && t.is_seq(line_id)) {
         for (long long r = 0; r < copies; r++)
             for (size_t c2 = t.first_child(line_id); c2 != ryml::NONE;
@@ -376,7 +379,10 @@ bool Expander::expand_repeat(size_t seq, size_t child, size_t entry,
             ensure_capacity(t, 2);
             size_t wrapper = t.insert_child(seq, after);
             t.ref(wrapper) |= ryml::MAP;
-            duplicate_tracked(t, def, wrapper, ryml::NONE, prov);
+            ensure_capacity(t, t.num_children(entry) + 2);
+            size_t copy = duplicate_tracked(t, entry, wrapper, ryml::NONE, prov);
+            size_t rep = t.find_child(copy, ryml::to_csubstr("repeat"));
+            if (rep != ryml::NONE) remove_tracked(t, rep, prov);
             after = wrapper;
         }
     }

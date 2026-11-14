@@ -14,7 +14,7 @@
  * (theta, phi, psi) touch the matrix form at all.
  *
  * The element-by-element construction (the branch bookkeeper in
- * pals_expand.cpp) walks the reference curve using floor_propagate():
+ * pals_bookkeeper.cpp) walks the reference curve using floor_propagate():
  * given the placement at the upstream end of an element and the element's local
  * displacement L and coordinate rotation S, it returns the placement at the
  * downstream end (Eq. wws). straight_LS / bend_LS / patch_LS build the (L, S)

@@ -5,9 +5,9 @@
 // and the one funnel every part of the library reports through. Converted to
 // the C `struct problem_list` at the end of parse_and_expand_PALS.
 //
-// Kept in its own header, rather than in pals_expand.cpp where the expander's
-// problems are raised, because the name checks in pals_check.cpp report into
-// the same list. Not part of the public C API declared in PALSParserCpp.h.
+// Kept in its own header because every stage of the expansion pipeline
+// (pals_pipeline.h) and the name checks in pals_check.cpp report into the same
+// list. Not part of the public C API declared in PALSParserCpp.h.
 
 #include <string>
 #include <vector>

@@ -77,6 +77,13 @@ file(COPY ${CMAKE_SOURCE_DIR}/lattice_files/
 add_library(PALSParserCpp SHARED
   src/PALSParserCpp.cpp
   src/pals_expand.cpp
+  src/pals_combine.cpp
+  src/pals_structure.cpp
+  src/pals_evaluate.cpp
+  src/pals_controllers.cpp
+  src/pals_sets.cpp
+  src/pals_bookkeeper.cpp
+  src/pals_tree.cpp
   src/pals_match.cpp
   src/pals_util.cpp
   src/pals_expression.cpp

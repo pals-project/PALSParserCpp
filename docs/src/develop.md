@@ -15,12 +15,30 @@ The library sources live in `src/`, split by concern:
   PALS code: the tree representation behind `YAMLTreeHandle` (`ParsedData`)
   plus the low-level tree helpers (`ensure_capacity`,
   `deep_copy_recursive`).
-- **`pals_expand.cpp`** — the lattice expansion pipeline that builds the
-  five-tree representation (`original` / `combined` / `expanded` /
-  `full_expanded` / `adjunct`): include splicing, `load` merging, structural
-  expansion (repeats, inherits, forks), expression, controller and `set`
-  evaluation, and the element bookkeeper that walks each branch filling in
-  reference parameters, floor placement, s-positions and dependent parameters.
+- **The lattice expansion pipeline**, which builds the five-tree
+  representation (`original` / `combined` / `expanded` / `full_expanded` /
+  `adjunct`), one stage per file. **`pals_pipeline.h`** declares what each
+  stage hands the next, and lists the order they run in:
+  - **`pals_expand.cpp`** — the entry points (`parse_and_expand_PALS`,
+    `expand_PALS_string`) and the correspondence-map C API. Runs the stages
+    on a work tree, then cuts that tree into `expanded`, `full_expanded` and
+    `adjunct`.
+  - **`pals_combine.cpp`** — the `original` and `combined` trees: resolving
+    file references, splicing `include`s and merging `load`ed files.
+  - **`pals_structure.cpp`** — structural expansion of the root lattice:
+    name substitution, `repeat`s, sub-lines, `inherit`s, forks, multipass.
+  - **`pals_evaluate.cpp`** — expression evaluation over the tree, the
+    constants and variables it reads, and the checks on them.
+  - **`pals_controllers.cpp`** — controllers, evaluated down their hierarchy
+    and applied to the parameters they drive.
+  - **`pals_sets.cpp`** — the `facility` walk and `set` commands, before and
+    after expansion.
+  - **`pals_bookkeeper.cpp`** — the element bookkeeper that walks each branch
+    filling in reference parameters, floor placement, s-positions and
+    dependent parameters, then places girders and records fork connections.
+- **`pals_tree.{h,cpp}`** — the tree helpers every pipeline stage uses:
+  reading and writing scalars, provenance-tracked copies, and finding a
+  document's lists, a lattice's branches and a branch's line.
 - **`pals_check.{h,cpp}`** — spelling checks against the fixed PALS vocabulary
   (element kinds and parameter group names). A `FlorP` group parses as valid
   YAML and would otherwise go unrecognised in silence, so it is reported here,

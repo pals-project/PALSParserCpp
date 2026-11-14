@@ -1,12 +1,13 @@
 // PALS name matching and parameter lookup: resolves a PALS name-matching
 // string (see match_names in PALSParserCpp.h) against a tree using PCRE2, and
 // reads the value of a matched element parameter, constant, or variable. The
-// lattice expansion that produces the trees this runs on lives in
-// pals_expand.cpp; the generic YAML tree wrapper in PALSParserCpp.cpp.
+// lattice expansion that produces the trees this runs on starts in
+// pals_expand.cpp (see pals_pipeline.h); the generic YAML tree wrapper in PALSParserCpp.cpp.
 
 #include "PALSParserCpp.h"
 #include "yaml_tree.h"
 #include "pals_util.h"
+#include "pals_tree.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -22,6 +23,10 @@
 
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
+
+using pals::key_str;
+using pals::val_str;
+using pals::trim;
 
 // ============================================================
 // NAME MATCHING
@@ -96,18 +101,6 @@ static bool full_match(const Pattern& re, const std::string& subject) {
                          PCRE2_ANCHORED | PCRE2_ENDANCHORED, md, nullptr);
     pcre2_match_data_free(md);
     return rc >= 0;
-}
-
-static std::string node_key_str(const ryml::Tree& t, size_t n) {
-    if (n == ryml::NONE || !t.has_key(n)) return "";
-    return std::string(t.key(n).str, t.key(n).len);
-}
-
-static std::string trimmed(const std::string& s) {
-    size_t a = s.find_first_not_of(" \t\r\n");
-    if (a == std::string::npos) return "";
-    size_t b = s.find_last_not_of(" \t\r\n");
-    return s.substr(a, b - a + 1);
 }
 
 // The positions in `s` that lie outside every bracket group, i.e. where an
@@ -215,7 +208,7 @@ struct Selector {
 
 static EleName parse_ele_name(const std::string& text, bool& ok) {
     EleName e;
-    std::string s = trimmed(text);
+    std::string s = trim(text);
     if (s.empty()) {
         ok = false;
         return e;
@@ -223,20 +216,20 @@ static EleName parse_ele_name(const std::string& text, bool& ok) {
     std::string lattice, branch;
     size_t p3 = find_top(s, ">>>");
     if (p3 != std::string::npos) {
-        lattice = trimmed(s.substr(0, p3));
-        s = trimmed(s.substr(p3 + 3));
+        lattice = trim(s.substr(0, p3));
+        s = trim(s.substr(p3 + 3));
         e.lattice_present = true;
     }
     size_t p2 = find_top(s, ">>");
     if (p2 != std::string::npos) {
-        branch = trimmed(s.substr(0, p2));
-        s = trimmed(s.substr(p2 + 2));
+        branch = trim(s.substr(0, p2));
+        s = trim(s.substr(p2 + 2));
         e.branch_present = true;
     }
     size_t pk = find_top(s, "::");
     if (pk != std::string::npos) {
-        std::string k = trimmed(s.substr(0, pk));
-        s = trimmed(s.substr(pk + 2));
+        std::string k = trim(s.substr(0, pk));
+        s = trim(s.substr(pk + 2));
         if (is_meta_key(k))
             e.meta = k;
         else
@@ -245,7 +238,7 @@ static EleName parse_ele_name(const std::string& text, bool& ok) {
     std::vector<bool> top = top_level_mask(s);
     for (size_t i = s.size(); i-- > 0;) {
         if (!top[i] || s[i] != '#') continue;
-        std::string n = trimmed(s.substr(i + 1));
+        std::string n = trim(s.substr(i + 1));
         char* end = nullptr;
         long v = std::strtol(n.c_str(), &end, 10);
         if (n.empty() || *end != '\0' || v < 1) {
@@ -253,7 +246,7 @@ static EleName parse_ele_name(const std::string& text, bool& ok) {
             return e;
         }
         e.instance = v;
-        s = trimmed(s.substr(0, i));
+        s = trim(s.substr(0, i));
         break;
     }
     e.raw_name = s;
@@ -282,7 +275,7 @@ static Selector parse_selector(const std::string& spec) {
     }
     if (parts.size() == 2) {
         set = parts[0];
-        std::string path = trimmed(parts[1]);
+        std::string path = trim(parts[1]);
         sel.path = split_dots(path);
         sel.has_param = true;
         for (const std::string& p : sel.path)
@@ -375,7 +368,7 @@ static bool name_ok(const ryml::Tree& t, const EleName& e, const Candidate& c,
         if (meta == ryml::NONE || !t.is_map(meta)) return false;
         size_t v = t.find_child(meta, ryml::to_csubstr(e.meta));
         if (v == ryml::NONE || !t.has_val(v)) return false;
-        std::string val = trimmed(std::string(t.val(v).str, t.val(v).len));
+        std::string val = trim(val_str(t, v));
         if (val.size() >= 2 && (val.front() == '"' || val.front() == '\'') &&
             val.back() == val.front())
             val = val.substr(1, val.size() - 2);
@@ -493,10 +486,10 @@ static void add_line(const ryml::Tree& t, size_t line,
             size_t def = t.first_child(entry);
             if (def == ryml::NONE || !t.has_key(def)) continue;
             c.node = def;
-            c.name = node_key_str(t, def);
+            c.name = key_str(t, def);
         } else if (t.has_val(entry)) {
             c.node = entry;
-            c.name = std::string(t.val(entry).str, t.val(entry).len);
+            c.name = val_str(t, entry);
         } else {
             continue;
         }
@@ -539,13 +532,13 @@ static void collect_expanded(const ryml::Tree& t, size_t node,
     if (node == ryml::NONE) return;
     std::string cur_lattice = lattice;
     if (t.is_map(node) && child_val_str(t, node, "kind") == "Lattice")
-        cur_lattice = node_key_str(t, node);
+        cur_lattice = key_str(t, node);
     size_t line = t.is_map(node) ? t.find_child(node, ryml::to_csubstr("line"))
                                  : ryml::NONE;
     if (line != ryml::NONE && t.is_seq(line)) {
         std::vector<Candidate> cur;
         std::set<std::string> active;
-        add_line(t, line, cur_lattice, {node_key_str(t, node)}, nullptr, active,
+        add_line(t, line, cur_lattice, {key_str(t, node)}, nullptr, active,
                  cur);
         finish_line(pop, std::move(cur));
         return;
@@ -561,7 +554,7 @@ static void collect_in_place(const ryml::Tree& t, size_t def,
                              std::vector<Candidate>& out) {
     for (size_t c = t.first_child(def); c != ryml::NONE; c = t.next_sibling(c)) {
         if (!t.is_seq(c) || !t.has_key(c)) continue;
-        std::string key = node_key_str(t, c);
+        std::string key = key_str(t, c);
         if (key != "line" && key != "elements") continue;
         for (size_t w = t.first_child(c); w != ryml::NONE; w = t.next_sibling(w)) {
             if (!t.is_map(w)) continue;
@@ -574,7 +567,7 @@ static void collect_in_place(const ryml::Tree& t, size_t def,
             if (defines && is_element_def(t, item)) {
                 Candidate cand;
                 cand.node = item;
-                cand.name = node_key_str(t, item);
+                cand.name = key_str(t, item);
                 out.push_back(std::move(cand));
             }
             collect_in_place(t, item, out);
@@ -598,21 +591,21 @@ static void collect_definitions(const ryml::Tree& t,
         if (def == ryml::NONE || !t.has_key(def) || !t.is_map(def)) continue;
         defs.push_back(def);
         if (child_val_str(t, def, "kind") == "BeamLine")
-            beamlines.emplace(node_key_str(t, def), def);
+            beamlines.emplace(key_str(t, def), def);
     }
     for (size_t def : defs) {
         if (is_element_def(t, def)) {
             Candidate c;
             c.node = def;
-            c.name = node_key_str(t, def);
+            c.name = key_str(t, def);
             pop.defs.push_back(std::move(c));
         }
         collect_in_place(t, def, pop.defs);
         size_t line = t.find_child(def, ryml::to_csubstr("line"));
         if (line == ryml::NONE || !t.is_seq(line)) continue;
         std::vector<Candidate> cur;
-        std::set<std::string> active{node_key_str(t, def)};
-        add_line(t, line, "", {node_key_str(t, def)}, &beamlines, active, cur);
+        std::set<std::string> active{key_str(t, def)};
+        add_line(t, line, "", {key_str(t, def)}, &beamlines, active, cur);
         finish_line(pop, std::move(cur));
     }
 }
@@ -623,7 +616,7 @@ static void collect_definitions(const ryml::Tree& t,
 static void definition_entries(const ryml::Tree& t, size_t node,
                                std::vector<size_t>& out) {
     if (node == ryml::NONE) return;
-    std::string k = node_key_str(t, node);
+    std::string k = key_str(t, node);
     if (t.is_seq(node) && (k == "facility" || k == "post_expansion")) {
         for (size_t e = t.first_child(node); e != ryml::NONE;
              e = t.next_sibling(e))
@@ -665,7 +658,7 @@ static void match_controllers(const ryml::Tree& t, size_t node,
     if (node == ryml::NONE) return;
     if (t.is_map(node) && t.has_key(node) &&
         child_val_str(t, node, "kind") == "Controller") {
-        if (full_match(re, node_key_str(t, node))) out.push_back(node);
+        if (full_match(re, key_str(t, node))) out.push_back(node);
         return;
     }
     for (size_t c = t.first_child(node); c != ryml::NONE; c = t.next_sibling(c))
@@ -755,7 +748,7 @@ static struct param_value param_value_for_element(
         struct param_value v = {PARAM_VALUE_MISSING, 0.0, nullptr};
         return v;
     }
-    return value_from_raw(std::string(t.val(node).str, t.val(node).len));
+    return value_from_raw(val_str(t, node));
 }
 
 // The value of an already-matched node, for a bare-name lookup that resolves to
@@ -767,13 +760,13 @@ static struct param_value value_of_const_var(const ryml::Tree& t, size_t node) {
     struct param_value v = {PARAM_VALUE_MISSING, 0.0, nullptr};
     if (node == ryml::NONE) return v;
     if (t.has_val(node))  // compact form: the matched node is the value scalar
-        return value_from_raw(std::string(t.val(node).str, t.val(node).len));
+        return value_from_raw(val_str(t, node));
     if (t.is_map(node)) {
         std::string kind = child_val_str(t, node, "kind");
         if (kind == "constant" || kind == "variable") {
             size_t val = t.find_child(node, ryml::to_csubstr("value"));
             if (val != ryml::NONE && t.has_val(val))
-                return value_from_raw(std::string(t.val(val).str, t.val(val).len));
+                return value_from_raw(val_str(t, val));
         }
     }
     return v;
@@ -817,7 +810,7 @@ static void collect_const_var(const ryml::Tree& t, size_t named,
                               const Pattern& name_re, std::vector<size_t>& out,
                               std::set<size_t>& seen) {
     if (named == ryml::NONE || !t.has_key(named)) return;
-    std::string key = node_key_str(t, named);
+    std::string key = key_str(t, named);
     if (key == "constants" || key == "variables") {
         // Compact form: a list of single-key `name: value` maps.
         if (!t.is_seq(named)) return;
@@ -825,7 +818,7 @@ static void collect_const_var(const ryml::Tree& t, size_t named,
              e = t.next_sibling(e)) {
             size_t item = t.first_child(e);
             if (item != ryml::NONE && t.has_key(item) &&
-                full_match(name_re, node_key_str(t, item)) &&
+                full_match(name_re, key_str(t, item)) &&
                 seen.insert(item).second)
                 out.push_back(item);
         }
@@ -849,7 +842,7 @@ static void match_const_var_in_pals(const ryml::Tree& t, size_t pals,
     if (pals == ryml::NONE) return;
     for (size_t c = t.first_child(pals); c != ryml::NONE;
          c = t.next_sibling(c)) {
-        std::string k = node_key_str(t, c);
+        std::string k = key_str(t, c);
         if (k == "facility" || k == "post_expansion") {
             // A sequence of single-key wrapper maps.
             for (size_t w = t.first_child(c); w != ryml::NONE;
@@ -894,7 +887,7 @@ ElementMatches match_element_parameters(const ryml::Tree& t, size_t root,
         for (size_t n : extra) {
             Candidate c;
             c.node = n;
-            c.name = node_key_str(t, n);
+            c.name = key_str(t, n);
             pop.defs.push_back(std::move(c));
         }
         out.elements = eval_sets(t, pop, sel);
@@ -998,7 +991,7 @@ YAML_API struct param_value get_parameter_value(YAMLTreeHandle tree,
                 size_t v = controller_variable(t, ctrl, sel.path[0]);
                 if (v != ryml::NONE && t.has_val(v))
                     values.push_back(value_from_raw(
-                        std::string(t.val(v).str, t.val(v).len)));
+                        val_str(t, v)));
             }
     } else if (sel.single_plain() && sel.sets[0][0].from.index == 0) {
         // No parameter path: a bare name resolves to a constant or variable.

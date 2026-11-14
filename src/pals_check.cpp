@@ -7,6 +7,9 @@
 #include <vector>
 
 #include "pals_util.h"
+#include "pals_tree.h"
+
+using pals::key_str;
 
 namespace {
 
@@ -400,7 +403,7 @@ void collect_label_keys(const ryml::Tree& t, size_t parent, const char* key,
     size_t m = t.find_child(parent, ryml::to_csubstr(key));
     if (m == ryml::NONE || !t.is_map(m)) return;
     for (size_t c = t.first_child(m); c != ryml::NONE; c = t.next_sibling(c))
-        if (t.has_key(c)) out.insert(std::string(t.key(c).str, t.key(c).len));
+        if (t.has_key(c)) out.insert(key_str(t, c));
 }
 
 Extensions collect_extensions(const ryml::Tree& t) {
@@ -496,7 +499,7 @@ void add(pals::ProblemList& problems, const std::string& msg,
 std::string path_of(const ryml::Tree& t, size_t node,
                     const std::string& group) {
     std::string name;
-    if (t.has_key(node)) name = std::string(t.key(node).str, t.key(node).len);
+    if (t.has_key(node)) name = key_str(t, node);
     if (name.empty()) return group;
     if (!group.empty()) name += ">" + group;
     return name;
@@ -505,7 +508,7 @@ std::string path_of(const ryml::Tree& t, size_t node,
 // "element 'q1': " when the map is keyed, "" when it is not.
 std::string where(const ryml::Tree& t, size_t node, const std::string& group) {
     std::string name;
-    if (t.has_key(node)) name = std::string(t.key(node).str, t.key(node).len);
+    if (t.has_key(node)) name = key_str(t, node);
     if (name.empty()) return group.empty() ? "" : group + ": ";
     if (!group.empty()) name += ">" + group;
     return "element '" + name + "': ";
@@ -722,7 +725,7 @@ void collect_names(const ryml::Tree& t, size_t node,
     if (node == ryml::NONE) return;
     auto take = [&](size_t n) {
         if (n != ryml::NONE && t.has_key(n))
-            out.emplace_back(n, std::string(t.key(n).str, t.key(n).len));
+            out.emplace_back(n, key_str(t, n));
     };
 
     if (t.has_key(node)) {
@@ -797,7 +800,7 @@ void check_girders(const ryml::Tree& t, size_t pals,
                  c = t.next_sibling(c)) {
                 in_dict.insert(c);
                 std::string name = t.has_key(c)
-                                       ? std::string(t.key(c).str, t.key(c).len)
+                                       ? key_str(t, c)
                                        : "<girder>";
                 if (!t.is_map(c) || child_val_str(t, c, "kind") != "Girder")
                     add(problems,
@@ -814,7 +817,7 @@ void check_girders(const ryml::Tree& t, size_t pals,
         if (t.is_map(n) && !in_dict.count(n) &&
             child_val_str(t, n, "kind") == "Girder") {
             std::string name = t.has_key(n)
-                                   ? std::string(t.key(n).str, t.key(n).len)
+                                   ? key_str(t, n)
                                    : "<girder>";
             add(problems,
                 "Girder '" + name + "' must be defined under 'PALS: girders'",
@@ -854,7 +857,7 @@ void check_adjustments(const ryml::Tree& t, size_t pals,
              v = t.next_sibling(v)) {
             size_t item = t.is_map(v) ? t.first_child(v) : ryml::NONE;
             std::string k = (item != ryml::NONE && t.has_key(item))
-                                ? std::string(t.key(item).str, t.key(item).len)
+                                ? key_str(t, item)
                                 : "";
             if (k != "vary" && k != "target") {
                 add(problems,

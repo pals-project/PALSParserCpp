@@ -1,7 +1,7 @@
 // Generic YAML tree wrapper: a thin C API over rapidyaml (parse, traverse,
 // query, modify, and emit YAML trees). It knows nothing about PALS; the PALS
-// lattice logic that builds on it lives in pals_lattice.cpp. Declarations
-// shared between the two are in yaml_tree.h.
+// lattice logic that builds on it starts in pals_expand.cpp (see
+// pals_pipeline.h). Declarations shared between the two are in yaml_tree.h.
 
 #include "PALSParserCpp.h"
 #include "yaml_tree.h"

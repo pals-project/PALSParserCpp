@@ -6,7 +6,7 @@
 // ELEMENT BOOKKEEPER
 // ============================================================
 //
-// The element bookkeeper (run_element_bookkeeper in pals_expand.cpp) walks each
+// The element bookkeeper (run_element_bookkeeper in pals_bookkeeper.cpp) walks each
 // branch after expression evaluation and fills in the position-dependent output
 // parameters: reference (species / energy / momentum / time), floor placement,
 // s_position, and the field-dependent multipole / bend strengths. The floor math

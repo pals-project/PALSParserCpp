@@ -3,8 +3,8 @@
 
 // The concrete YAML tree representation (the type behind the opaque
 // YAMLTreeHandle) and its low-level helpers, shared between the generic YAML
-// tree wrapper (PALSParserCpp.cpp) and the PALS lattice logic
-// (pals_lattice.cpp). This header is not installed and is not part of the
+// tree wrapper (PALSParserCpp.cpp) and the PALS lattice logic (see
+// pals_pipeline.h). This header is not installed and is not part of the
 // public C API declared in PALSParserCpp.h.
 
 #include <cstddef>

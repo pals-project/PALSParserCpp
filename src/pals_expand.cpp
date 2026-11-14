@@ -423,6 +423,18 @@ static void make_expanded_and_adjunct(ParsedData* comb,
                              skip, left->provenance);
     chain_prov(left->provenance, work.provenance);
 
+    // A girder's `supported` list now says what it holds up; the
+    // `GirderP.elements` that asked for it stays in `original` and `combined`,
+    // and so does the GirderP group when that was all it held.
+    for (size_t g : girder_defs(left->tree)) {
+        ryml::Tree& lt = left->tree;
+        size_t gp = lt.find_child(g, ryml::to_csubstr("GirderP"));
+        if (gp == ryml::NONE || !lt.is_map(gp)) continue;
+        size_t el = lt.find_child(gp, ryml::to_csubstr("elements"));
+        if (el != ryml::NONE) remove_tracked(lt, el, left->provenance);
+        if (lt.num_children(gp) == 0) remove_tracked(lt, gp, left->provenance);
+    }
+
     expanded_out = mini;
     full_expanded_out = full;
     adjunct_out = left;

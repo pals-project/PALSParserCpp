@@ -468,28 +468,29 @@ TEST_CASE("each Girder in the adjunct lists what it supports", "[placement]") {
                    "        elements: qr, d1\n"));
     REQUIRE(joined(x.lat) == "");
     YAMLTreeHandle adj = x.lat.adjunct;
-    auto listed = [&](const char* g, const char* key) {
-        YAMLNodeId gp = get_child_by_key(adj, girder(adj, g), "GirderP");
-        REQUIRE(gp != YAML_NULL_ID);
-        YAMLNodeId l = get_child_by_key(adj, gp, key);
+    auto supported = [&](const char* g) {
+        YAMLNodeId l = get_child_by_key(adj, girder(adj, g), "supported");
         REQUIRE(l != YAML_NULL_ID);
         char* s = node_to_string(adj, l);
         std::string out = s;
         yaml_free_string(s);
         return out;
     };
-    // Lattice order, `{branch}>>{element}: {index}`, whatever order
-    // GirderP.elements named them in.
-    REQUIRE(listed("inner", "supported_elements") ==
-            "supported_elements:\n"
+    // Lattice elements in lattice order as `{branch}>>{element}: {index}`,
+    // whatever order GirderP.elements named them in, then girders by name.
+    REQUIRE(supported("inner") ==
+            "supported:\n"
             "  - main>>qr: 2\n"
             "  - main>>qr: 3\n"
             "  - main>>d1: 4\n");
-    REQUIRE(listed("inner", "supported_girders") == "supported_girders: []\n");
-    REQUIRE(listed("outer", "supported_elements") ==
-            "supported_elements:\n  - main>>q2: 7\n");
-    REQUIRE(listed("outer", "supported_girders") ==
-            "supported_girders:\n  - inner\n");
+    REQUIRE(supported("outer") ==
+            "supported:\n"
+            "  - main>>q2: 7\n"
+            "  - inner\n");
+    // The GirderP.elements that asked for them is in `combined`, not here, and
+    // with it gone the group holds nothing.
+    REQUIRE(get_child_by_key(adj, girder(adj, "inner"), "GirderP") ==
+            YAML_NULL_ID);
 }
 
 TEST_CASE("a post_expansion set moves a Girder and what it supports",

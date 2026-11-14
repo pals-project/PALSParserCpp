@@ -80,7 +80,7 @@ const std::map<std::string, std::set<std::string>>& group_params() {
         {"ForkP",
          {"to_line", "destination_element", "new_branch",
           "propagate_reference", "forked_to"}},
-        {"GirderP", {"elements", "supported_elements", "supported_girders"}},
+        {"GirderP", {"elements"}},
         {"MaterialP",
          {"name", "state", "density", "area_density", "radiation_length",
           "mean_excitation_energy", "components"}},
@@ -356,7 +356,15 @@ const std::set<std::string>& element_params(const std::string& kind) {
         return s;
     }();
 
+    // A Girder carries the parser's list of what it supports.
+    static const std::set<std::string> girder = [] {
+        std::set<std::string> s = base;
+        s.insert("supported");
+        return s;
+    }();
+
     if (kind == "BeamLine") return beamline;
+    if (kind == "Girder") return girder;
     if (kind == "Lattice") return lattice;
     if (kind == "UnionEle") return unionele;
     if (kind == "Controller") return controller;

@@ -1052,12 +1052,14 @@ static void write_shifted_floor(ryml::Tree& t, size_t ele,
 }
 
 // Match the girders to what they support (s:lattice.expand), filling
-// `support`, and record the result on each girder as two output lists in its
-// GirderP: `supported_elements`, one `{branch}>>{element}: {index}` entry per
-// lattice element in lattice order -- the form ForkFromP names elements by, the
-// index telling apart the copies a `repeat` or multipass makes -- and
-// `supported_girders`, the names of the girders it supports. Each takes the
-// place of any list of that name the input carried.
+// `support`, and record the result on each girder as the output list
+// `supported`, a parameter of the girder itself: first the lattice elements, in lattice order, each a
+// `{branch}>>{element}: {index}` entry -- the form ForkFromP names elements by,
+// the index telling apart the copies a `repeat` or multipass makes -- and then
+// the girders, each by its name alone, since a girder sits in no branch. It
+// takes the place of any list of that name the input carried. Only what the
+// girder holds up directly is listed: what a supported girder holds is on that
+// girder's own list.
 static void match_girders(ryml::Tree& t, size_t lat_node,
                           const std::vector<size_t>& girders,
                           std::map<size_t, size_t>& support,
@@ -1145,27 +1147,21 @@ static void match_girders(ryml::Tree& t, size_t lat_node,
         if (it != support.end()) held[it->second].push_back(o);
     }
     for (size_t g : girders) {
-        size_t gp = find_or_add_map_child(t, g, "GirderP");
-        for (const char* key : {"supported_elements", "supported_girders"}) {
-            size_t old = t.find_child(gp, ryml::to_csubstr(key));
-            if (old != ryml::NONE) t.remove(old);
-        }
-        size_t els = find_or_add_seq_child(t, gp, "supported_elements");
-        size_t gis = find_or_add_seq_child(t, gp, "supported_girders");
+        size_t old = t.find_child(g, ryml::to_csubstr("supported"));
+        if (old != ryml::NONE) t.remove(old);
+        size_t list = find_or_add_seq_child(t, g, "supported");
         for (size_t e : held[g]) {
             ensure_capacity(t, 2);
+            size_t item = t.append_child(list);
             auto w = where.find(e);
             if (w == where.end()) {
-                size_t item = t.append_child(gis);
-                t.set_val(item, t.to_arena(ryml::to_csubstr(key_str(t, e))));
-                t.ref(item) |= ryml::VAL;
-                continue;
+                t.to_val(item, t.to_arena(ryml::to_csubstr(key_str(t, e))));
+            } else {
+                t.ref(item) |= ryml::MAP;
+                append_keyval(t, item,
+                              (w->second.branch + ">>" + key_str(t, e)).c_str(),
+                              std::to_string(w->second.index));
             }
-            size_t item = t.append_child(els);
-            t.ref(item) |= ryml::MAP;
-            append_keyval(t, item,
-                          (w->second.branch + ">>" + key_str(t, e)).c_str(),
-                          std::to_string(w->second.index));
         }
     }
 }

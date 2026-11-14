@@ -215,7 +215,7 @@ struct SetTarget {
 
 // Walk the `facility` list in order (s:lattice.expand), resolving each
 // definition's inherits and immediate expressions as it is reached and running
-// each `set` against the definitions before it.
+// each `set` against the definitions before it and the girders.
 void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
                        Provenance& prov, ProblemList& problems);
 

@@ -472,6 +472,12 @@ void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
     SubstituteMode immediate;
     immediate.immediate_only = true;
 
+    // The girders are defined outside the list, under `PALS: girders`, so every
+    // set in it may reach them; their immediate expressions are evaluated first,
+    // so that a set reading one (`PARAMETER`) reads a number.
+    const std::vector<size_t> girders = girder_defs(t);
+    for (size_t g : girders) substitute_values(t, g, ctx, problems, immediate);
+
     std::map<std::string, size_t> before;  // facility definitions so far
     std::vector<size_t> defined;
     for (size_t entry : entries) {
@@ -491,7 +497,9 @@ void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
         }
         for (const SetCommand& cmd : cmds) {
             execute_set(t, cmd,
-                        match_definition_parameters(t, defined, cmd.param), true,
+                        match_definition_parameters(t, defined, cmd.param,
+                                                    girders),
+                        true,
                         ctx, prov, problems);
             // A fresh context after each set: it wrote to the tree the next
             // expression reads, so a memoized value from before it is stale.
@@ -509,7 +517,7 @@ void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
                              std::vector<SetTarget>* written) {
     if (lat_node == ryml::NONE) return;
     // The girders stand outside the lattice but are as much a part of the
-    // machine, and a `post_expansion` set may move one (s:lattice.expand).
+    // machine, and a set may move one.
     const std::vector<size_t> girders = girder_defs(t);
     for (size_t e : entries) {
         for (const SetCommand& cmd : entry_set_commands(t, e, problems)) {

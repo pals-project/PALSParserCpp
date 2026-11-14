@@ -897,7 +897,8 @@ ElementMatches match_element_parameters(const ryml::Tree& t, size_t root,
 
 ElementMatches match_definition_parameters(const ryml::Tree& t,
                                            const std::vector<size_t>& entries,
-                                           const std::string& spec) {
+                                           const std::string& spec,
+                                           const std::vector<size_t>& extra) {
     ElementMatches out;
     Selector sel = parse_selector(spec);
     out.valid = sel.valid;
@@ -914,6 +915,12 @@ ElementMatches match_definition_parameters(const ryml::Tree& t,
     if (out.valid) {
         Population pop;
         collect_definitions(t, entries, pop);
+        for (size_t n : extra) {
+            Candidate c;
+            c.node = n;
+            c.name = key_str(t, n);
+            pop.defs.push_back(std::move(c));
+        }
         out.elements = eval_sets(t, pop, sel);
     }
     return out;

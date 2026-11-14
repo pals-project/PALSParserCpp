@@ -521,6 +521,35 @@ TEST_CASE("a post_expansion set moves a Girder and what it supports",
               0.03, 0.005, 0);
 }
 
+TEST_CASE("a facility set moves a Girder and what it supports",
+          "[placement]") {
+    // The girders stand outside the facility list, so every set in it reaches
+    // them, wherever it sits; PARAMETER reads the girder's evaluated value.
+    Expanded x(doc("    - constants:\n"
+                   "        - dx: 0.01\n"
+                   "    - set:\n"
+                   "        parameter: g1>BodyShiftP.x_offset\n"
+                   "        value: PARAMETER + 0.02\n"
+                   "    - set:\n"
+                   "        parameter: g1>BodyShiftP.y_offset\n"
+                   "        value: dx / 2\n",
+                   GIRDER_LINE,
+                   "  girders:\n"
+                   "    g1:\n"
+                   "      kind: Girder\n"
+                   "      GirderP:\n"
+                   "        elements: q1:q2\n"
+                   "      BodyShiftP:\n"
+                   "        x_offset: dx\n"));
+    REQUIRE(joined(x.lat) == "");
+    YAMLTreeHandle t = x.full();
+    chk_place(t, element(t, "d1"), "ShiftedFloorP", 0, 0, 0);
+    chk_place(t, element(t, "q1"), "ShiftedFloorP", 0.03, 0.005, 1);
+    chk_place(t, element(t, "q2"), "ShiftedFloorP", 0.03, 0.005, 2.5);
+    chk_place(x.lat.adjunct, girder(x.lat.adjunct, "g1"), "ShiftedFloorP",
+              0.03, 0.005, 0);
+}
+
 TEST_CASE("Girder mistakes are reported", "[placement][problems]") {
     SECTION("an element supported twice") {
         Expanded x(doc("", GIRDER_LINE,

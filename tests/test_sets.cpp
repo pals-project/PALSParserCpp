@@ -356,6 +356,77 @@ TEST_CASE("a set creates a parameter that defaults to zero",
     free_all(lat);
 }
 
+TEST_CASE("PARAMETER on a line item reads the item's own value or the default",
+          "[expr][lattices][set]") {
+    // s:set: before branch expansion a line item that only uses an element has
+    // just the values written on the item itself. So for the first q1, which
+    // writes no Kn1L, PARAMETER is the default (zero), not the definition's
+    // 0.375; for the second it is the item's own 0.7. The values the set writes
+    // on the items then override the definition's at expansion.
+    const std::string doc =
+        facility_file("    - q1:\n"
+                      "        kind: Quadrupole\n"
+                      "        length: 0.5\n"
+                      "        MagneticMultipoleP:\n"
+                      "          Kn1L: 0.375\n"
+                      "    - main:\n"
+                      "        kind: BeamLine\n"
+                      "        line:\n" +
+                      std::string(BEGIN_ENTRY) +
+                      "          - q1\n"
+                      "          - q1:\n"
+                      "              MagneticMultipoleP:\n"
+                      "                Kn1L: 0.7\n"
+                      "    - set:\n"
+                      "        parameter: main>>q1>MagneticMultipoleP.Kn1L\n"
+                      "        value: PARAMETER + 0.01\n",
+                      "main");
+
+    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(joined(lat) == "");
+    REQUIRE(close(nth_param(lat.full_expanded, "q1", 0, "MagneticMultipoleP",
+                            "Kn1L"),
+                  0.01));
+    REQUIRE(close(nth_param(lat.full_expanded, "q1", 1, "MagneticMultipoleP",
+                            "Kn1L"),
+                  0.71));
+
+    free_all(lat);
+}
+
+TEST_CASE("PARAMETER on an unset parameter with a null default is an error",
+          "[expr][lattices][set][problems]") {
+    // s:set: an unwritten parameter's PARAMETER is its default, and a `null`
+    // default (ApertureP.x_min, aperture.md) is no value at all. The line item
+    // does not get the definition's x_min until branch expansion, so the set
+    // reads the item's unwritten x_min and must report it.
+    const std::string doc =
+        facility_file("    - q1:\n"
+                      "        kind: Quadrupole\n"
+                      "        length: 0.5\n"
+                      "        ApertureP:\n"
+                      "          x_min: -0.02\n"
+                      "    - main:\n"
+                      "        kind: BeamLine\n"
+                      "        line:\n" +
+                      std::string(BEGIN_ENTRY) +
+                      "          - q1\n"
+                      "    - set:\n"
+                      "        parameter: main>>q1>ApertureP.x_min\n"
+                      "        value: PARAMETER + 0.01\n",
+                      "main");
+
+    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(any_contains(problem_messages(lat),
+                         "PARAMETER has no value -- 'x_min' is not set and its "
+                         "default is null"));
+    // Nothing was written, so the item gets the definition's value.
+    REQUIRE(close(one_param(lat.full_expanded, "q1", "ApertureP", "x_min"),
+                  -0.02));
+
+    free_all(lat);
+}
+
 TEST_CASE("reading a not-yet-derived parameter in a set is an error",
           "[expr][lattices][set][problems]") {
     // The second example of s:lattice.expand: Q1's Bs1 will be derived from its

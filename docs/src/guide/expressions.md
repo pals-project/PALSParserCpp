@@ -122,6 +122,19 @@ compute and reading it beforehand is an error:
     value: Q1>MagneticMultipoleP.Bs1   # error: Bs1 needs the reference momentum
 ```
 
+`PARAMETER` reads an unwritten parameter as its default value. For most
+parameters this is zero. Where the default is `null` (for example
+`ApertureP.x_min`, `BendP.e1` or `RFP.frequency`), there is no value to read,
+and using `PARAMETER` is an error.
+
+This matters for a `BeamLine` line item that only uses an element, such as
+`- q1`. Before branch expansion such an item has only the values written on
+the item itself, so a `facility` set on `main>>q1>MagneticMultipoleP.Kn1L`
+sees the default (zero), not the value in the `q1` definition. The value the
+set writes on the item then overrides the definition's at expansion. To change
+the values that line items get from the definition, put the set under
+`post_expansion`.
+
 ### Interdependent parameters
 
 The members of such a family state one physical quantity in different units, so

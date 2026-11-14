@@ -67,15 +67,54 @@ static bool awaits_derivation(const ryml::Tree& t, size_t ele,
     return false;
 }
 
+// The parameters whose default value is `null` (one section each under
+// source/parameters). `PARAMETER` (s:set) is the current value of the parameter
+// being written; for an unwritten parameter that is its default, and a `null`
+// default is no value at all, so reading it is an error. This matters most for
+// a BeamLine line item that only uses an element: before branch expansion it
+// holds just the values written on the item itself, not the definition's.
+static bool has_null_default(const std::vector<std::string>& path) {
+    static const std::map<std::string, std::set<std::string>> nulls = {
+        {"ApertureP",
+         {"x_min", "x_max", "x_center", "x_width", "y_min", "y_max", "y_center",
+          "y_width", "vertices"}},
+        {"BeamBeamP",
+         {"sigma_x", "sigma_y", "sigma_z", "alpha_x", "beta_x", "alpha_y",
+          "beta_y", "charge", "energy", "N_particle"}},
+        {"BendP",
+         {"Bn0_ref", "e1", "e2", "e1_rect", "e2_rect", "g_ref", "L_chord",
+          "L_rectangle", "radius_ref"}},
+        {"FloorP", {"x", "y", "z", "theta", "phi", "psi"}},
+        {"ParticleP",
+         {"sigma_xx", "sigma_xpx", "sigma_xy", "sigma_xpy", "sigma_xz",
+          "sigma_xpz", "sigma_pxpx", "sigma_pxy", "sigma_pxpy", "sigma_pxz",
+          "sigma_pxpz", "sigma_yy", "sigma_ypy", "sigma_yz", "sigma_ypz",
+          "sigma_pypy", "sigma_pyz", "sigma_pypz", "sigma_zz", "sigma_zpz",
+          "sigma_pzpz"}},
+        {"ReferenceP", {"species_ref"}},
+        {"ReferenceChangeP",
+         {"dtime_ref", "dE_ref", "dpc_ref", "time_ref", "E_tot_ref", "pc_ref",
+          "species_ref"}},
+        {"RFP", {"frequency", "harmonic_number", "num_cells"}},
+    };
+    if (path.size() < 2) return false;
+    auto it = nulls.find(path[path.size() - 2]);
+    return it != nulls.end() && it->second.count(path.back()) != 0;
+}
+
 // Reads the value a `set` expression sees for a parameter: the written value if
 // there is one, otherwise zero (an unwritten parameter of a known element is
 // zero, per s:lattice.expand). `pending` reports the third case -- the value is
-// still to be derived, so reading it is an error.
+// still to be derived, so reading it is an error. When `want_default` is set
+// (the read is for `PARAMETER`), `null_default` reports a fourth: the parameter
+// is unwritten and its default is `null`, so there is no value to read.
 static bool read_set_operand(const ryml::Tree& t, size_t ele,
                              const std::vector<std::string>& path,
                              const EvalContext& ctx, bool pre, double& out,
-                             bool& pending) {
+                             bool& pending, bool want_default,
+                             bool& null_default) {
     pending = false;
+    null_default = false;
     if (ele == ryml::NONE || path.empty()) return false;
     size_t node = resolve_param_path(t, ele, path);
     if (node != ryml::NONE && t.has_val(node)) {
@@ -88,6 +127,10 @@ static bool read_set_operand(const ryml::Tree& t, size_t ele,
     }
     if (pre && awaits_derivation(t, ele, path)) {
         pending = true;
+        return false;
+    }
+    if (want_default && has_null_default(path)) {
+        null_default = true;
         return false;
     }
     out = 0.0;
@@ -207,23 +250,29 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
         // `PARAMETER` is the value being replaced; `SELF>path` reaches the
         // rest of the element. Both are scoped to this one element, so the
         // resolver is rebuilt for each. A value still to be derived is noted
-        // under the name it was read by, `label`.
+        // under the name it was read by, `label`. `PARAMETER` alone also
+        // reports an unwritten parameter whose default is `null`.
         bool pending = false;
         std::string pending_name;
+        bool no_default = false;
         auto operand = [&](size_t of, const std::vector<std::string>& path,
-                           const std::string& label, double& out) {
+                           const std::string& label, double& out,
+                           bool want_default = false) {
             bool p = false;
-            bool ok = read_set_operand(t, of, path, ctx, pre, out, p);
+            bool nd = false;
+            bool ok = read_set_operand(t, of, path, ctx, pre, out, p,
+                                       want_default, nd);
             if (p) {
                 pending = true;
                 pending_name = label;
             }
+            if (nd) no_default = true;
             return ok;
         };
         SymbolLookup scoped = [&](const std::string& name,
                                   double& out) -> bool {
             if (name == "PARAMETER")
-                return operand(ele, tg.path, matches.path.back(), out);
+                return operand(ele, tg.path, matches.path.back(), out, true);
             if (name.compare(0, 5, "SELF>") == 0)
                 return operand(ele, split_dots(name.substr(5)), name, out);
             // An `element>path` reference reads by the same rules: the written
@@ -246,6 +295,12 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
             add_problem(problems, where + ": '" + pending_name +
                                       "' has no value yet -- it is derived "
                                       "during lattice expansion");
+            continue;
+        }
+        if (no_default) {
+            add_problem(problems, where + ": PARAMETER has no value -- '" +
+                                      matches.path.back() +
+                                      "' is not set and its default is null");
             continue;
         }
         if (r.deferred) continue;  // random(); leave the parameter alone

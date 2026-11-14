@@ -357,7 +357,15 @@ const std::set<std::string>& element_params(const std::string& kind) {
         return s;
     }();
 
+    // A Girder carries the parser's list of what it supports.
+    static const std::set<std::string> girder = [] {
+        std::set<std::string> s = base;
+        s.insert("supported");
+        return s;
+    }();
+
     if (kind == "BeamLine") return beamline;
+    if (kind == "Girder") return girder;
     if (kind == "Lattice") return lattice;
     if (kind == "UnionEle") return unionele;
     if (kind == "Controller") return controller;

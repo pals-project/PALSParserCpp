@@ -291,9 +291,12 @@ extern "C" {
  *           - `adjunct`: the rest of the document, keeping its PALS/facility
  * scaffolding: element and beamline definitions, `use` statements, constants,
  * `post_expansion`, `adjustments`, the girders (with the `FloorP` and
- * `ShiftedFloorP` computed for them), and any Lattice that was not the one
- * expanded. Definitions substituted into
- * the lattice are copies, so they appear in both trees.
+ * `ShiftedFloorP` computed for them, and, in place of the `GirderP.elements`
+ * that asked for it, a `supported` list on each girder of what it holds up
+ * directly: the lattice elements first, as `{branch}>>{element}: {index}`
+ * entries in lattice order, then the girders by name), and any Lattice that was
+ * not the one expanded. Definitions substituted into the lattice are copies, so
+ * they appear in both trees.
  *         All five handles must be freed individually with delete_tree().
  *
  *         The returned struct also carries `problems`: an owning list of every

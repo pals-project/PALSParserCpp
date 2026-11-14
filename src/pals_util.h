@@ -58,8 +58,11 @@ ElementMatches match_element_parameters(const ryml::Tree& t, size_t root,
 // the entries hold; a `{branch}>>` qualified one reaches the elements in the
 // lines of the BeamLines they define. A `{lattice}>>>` qualifier cannot apply --
 // no lattice has been built yet -- and makes the match string invalid here.
+// `extra` are keyed definitions outside the entries that an unqualified name
+// also reaches (the girders).
 ElementMatches match_definition_parameters(const ryml::Tree& t,
                                            const std::vector<size_t>& entries,
-                                           const std::string& spec);
+                                           const std::string& spec,
+                                           const std::vector<size_t>& extra = {});
 
 #endif  // PALS_UTIL_H

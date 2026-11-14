@@ -1051,36 +1051,37 @@ static void write_shifted_floor(ryml::Tree& t, size_t ele,
     write_floor_group(t, ele, "ShiftedFloorP", s);
 }
 
-// The `girders` dict of the PALS node: girder name -> definition.
-static std::vector<size_t> girder_defs(const ryml::Tree& t) {
-    std::vector<size_t> out;
-    size_t pals = t.find_child(t.root_id(), ryml::to_csubstr("PALS"));
-    if (pals == ryml::NONE) return out;
-    size_t g = t.find_child(pals, ryml::to_csubstr("girders"));
-    if (g == ryml::NONE || !t.is_map(g)) return out;
-    for (size_t c = t.first_child(g); c != ryml::NONE; c = t.next_sibling(c))
-        if (t.is_map(c) && t.has_key(c) &&
-            child_val_str(t, c, "kind") == "Girder")
-            out.push_back(c);
-    return out;
-}
+// Match the girders to what they support (s:lattice.expand), filling
+// `support`, and record the result on each girder as the output list
+// `supported`, a parameter of the girder itself: first the lattice elements, in lattice order, each a
+// `{branch}>>{element}: {index}` entry -- the form ForkFromP names elements by,
+// the index telling apart the copies a `repeat` or multipass makes -- and then
+// the girders, each by its name alone, since a girder sits in no branch. It
+// takes the place of any list of that name the input carried. Only what the
+// girder holds up directly is listed: what a supported girder holds is on that
+// girder's own list.
+static void match_girders(ryml::Tree& t, size_t lat_node,
+                          const std::vector<size_t>& girders,
+                          std::map<size_t, size_t>& support,
+                          ProblemList& problems) {
+    // Where each lattice element sits, for naming it.
+    struct Place {
+        std::string branch;
+        size_t index;
+    };
+    std::map<size_t, Place> where;
+    for (size_t branch : branch_nodes(t, lat_node)) {
+        size_t line = branch_line(t, branch);
+        if (line == ryml::NONE || !t.has_key(branch)) continue;
+        size_t index = 0;
+        for (size_t le = t.first_child(line); le != ryml::NONE;
+             le = t.next_sibling(le)) {
+            ++index;
+            size_t ele = line_entry_element(t, le);
+            if (ele != ryml::NONE) where[ele] = Place{key_str(t, branch), index};
+        }
+    }
 
-// Place the girders and fill in every element's ShiftedFloorP
-// (shiftedfloor.md): its placement with its BodyShiftP and the shifts of the
-// girders that support it (coordinates.md, s:girder.mis).
-//
-// A girder's nominal placement comes from its CoordinateSetP and is its FloorP;
-// its BodyShiftP then moves it, and with it everything it supports, as one
-// rigid body. Written as a rigid motion of the floor, the girder G moves things
-// by M_G = F_G0 * Shift_G * F_G0^-1, after the motion of the girder supporting
-// it, if any. An element E with reference frame F_E0 and its own shift Shift_E
-// ends up at M_G * F_E0 * Shift_E, which is Eqs. lwwl-vewe.
-static void place_girders_and_shifts(ryml::Tree& t, FloorContext& ctx,
-                                     ProblemList& problems) {
-    std::vector<size_t> girders = girder_defs(t);
-
-    // What each girder supports, and so which girder supports what.
-    std::map<size_t, size_t> support;  // element or girder -> its girder
     for (size_t g : girders) {
         std::string gname = ele_name(t, g);
         size_t gp = t.find_child(g, ryml::to_csubstr("GirderP"));
@@ -1096,7 +1097,7 @@ static void place_girders_and_shifts(ryml::Tree& t, FloorContext& ctx,
         for (size_t o : girders)
             if (o != g) others.push_back(o);
         ElementMatches m =
-            match_element_parameters(t, ctx.lat_node, spec, others);
+            match_element_parameters(t, lat_node, spec, others);
         if (!m.valid || m.has_param) {
             add_problem(problems,
                         "Girder '" + gname + "': GirderP.elements '" + spec +
@@ -1110,6 +1111,11 @@ static void place_girders_and_shifts(ryml::Tree& t, FloorContext& ctx,
                             "' matches nothing in the expanded lattice",
                         gname, Severity::Warning);
         for (size_t e : m.elements) {
+            // The `branch_end` cap is the parser's marker, not something a
+            // girder can hold up.
+            if (where.count(e) && key_str(t, e) == "branch_end" &&
+                child_val_str(t, e, "kind") == "Placeholder")
+                continue;
             auto it = support.find(e);
             if (it != support.end() && it->second != g) {
                 add_problem(problems,
@@ -1123,6 +1129,58 @@ static void place_girders_and_shifts(ryml::Tree& t, FloorContext& ctx,
         }
     }
 
+    // The lists, in lattice order and then in the order the girders are written.
+    std::map<size_t, std::vector<size_t>> held;  // girder -> what it supports
+    for (size_t branch : branch_nodes(t, lat_node)) {
+        size_t line = branch_line(t, branch);
+        if (line == ryml::NONE) continue;
+        for (size_t le = t.first_child(line); le != ryml::NONE;
+             le = t.next_sibling(le)) {
+            size_t ele = line_entry_element(t, le);
+            auto it = support.find(ele);
+            if (ele != ryml::NONE && it != support.end())
+                held[it->second].push_back(ele);
+        }
+    }
+    for (size_t o : girders) {
+        auto it = support.find(o);
+        if (it != support.end()) held[it->second].push_back(o);
+    }
+    for (size_t g : girders) {
+        size_t old = t.find_child(g, ryml::to_csubstr("supported"));
+        if (old != ryml::NONE) t.remove(old);
+        size_t list = find_or_add_seq_child(t, g, "supported");
+        for (size_t e : held[g]) {
+            ensure_capacity(t, 2);
+            size_t item = t.append_child(list);
+            auto w = where.find(e);
+            if (w == where.end()) {
+                t.to_val(item, t.to_arena(ryml::to_csubstr(key_str(t, e))));
+            } else {
+                t.ref(item) |= ryml::MAP;
+                append_keyval(t, item,
+                              (w->second.branch + ">>" + key_str(t, e)).c_str(),
+                              std::to_string(w->second.index));
+            }
+        }
+    }
+}
+
+// Place the girders and fill in every element's ShiftedFloorP
+// (shiftedfloor.md): its placement with its BodyShiftP and the shifts of the
+// girders that support it (coordinates.md, s:girder.mis),
+// with the support match_girders found.
+//
+// A girder's nominal placement comes from its CoordinateSetP and is its FloorP;
+// its BodyShiftP then moves it, and with it everything it supports, as one
+// rigid body. Written as a rigid motion of the floor, the girder G moves things
+// by M_G = F_G0 * Shift_G * F_G0^-1, after the motion of the girder supporting
+// it, if any. An element E with reference frame F_E0 and its own shift Shift_E
+// ends up at M_G * F_E0 * Shift_E, which is Eqs. lwwl-vewe.
+static void place_girders_and_shifts(ryml::Tree& t, FloorContext& ctx,
+                                     const std::vector<size_t>& girders,
+                                     const std::map<size_t, size_t>& support,
+                                     ProblemList& problems) {
     // Each girder's nominal placement and motion, parents first.
     std::map<size_t, FloorState> nominal, motion;
     std::set<size_t> failed;
@@ -1307,14 +1365,15 @@ static bool fork_made_branch(const ryml::Tree& t, size_t fork) {
 }
 
 void run_element_bookkeeper(ryml::Tree& t, size_t lat_node,
-                            ProblemList& problems) {
+                            GirderSupport& girders, ProblemList& problems) {
     // Each branch's line is walked in order, threading each element's results
     // (persisted in the tree) into the next. After the branch's elements, a
     // `branch_end` Placeholder is appended and bookkept to hold the branch's
     // final floor placement and reference parameters (the downstream end of the
     // last element). The floor placement is settled segment by segment as the
     // walk goes (see FLOOR PLACEMENT), and once every branch is placed the
-    // girders are, and every element's ShiftedFloorP.
+    // girders are -- matched to what they support on the first pass only -- and
+    // every element's ShiftedFloorP.
     //
     // A Fork into a new branch seeds that branch's beginning element from its
     // own floor, and from its reference when its `propagate_reference` is true;
@@ -1423,7 +1482,12 @@ void run_element_bookkeeper(ryml::Tree& t, size_t lat_node,
                              problems);
     }
 
-    place_girders_and_shifts(t, ctx, problems);
+    std::vector<size_t> gdefs = girder_defs(t);
+    if (!girders.matched) {
+        match_girders(t, lat_node, gdefs, girders.by, problems);
+        girders.matched = true;
+    }
+    place_girders_and_shifts(t, ctx, gdefs, girders.by, problems);
 }
 
 // Map every element definition in the expanded lattice to the

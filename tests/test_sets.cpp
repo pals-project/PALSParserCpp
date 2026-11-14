@@ -418,11 +418,40 @@ TEST_CASE("PARAMETER on an unset parameter with a null default is an error",
 
     struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
     REQUIRE(any_contains(problem_messages(lat),
-                         "PARAMETER has no value -- 'x_min' is not set and its "
-                         "default is null"));
+                         "PARAMETER has no value -- the value of 'x_min' is "
+                         "null"));
     // Nothing was written, so the item gets the definition's value.
     REQUIRE(close(one_param(lat.full_expanded, "q1", "ApertureP", "x_min"),
                   -0.02));
+
+    free_all(lat);
+}
+
+TEST_CASE("PARAMETER on a parameter written as null is an error",
+          "[expr][lattices][set][problems]") {
+    // s:set: it is an error if PARAMETER is used when the value of the
+    // parameter being set is `null`. Here the null is written, not defaulted.
+    // This used to be reported as "unknown constant or variable 'PARAMETER'".
+    const std::string doc =
+        facility_file("    - q1:\n"
+                      "        kind: Quadrupole\n"
+                      "        length: 0.5\n"
+                      "        ApertureP:\n"
+                      "          x_min: null\n"
+                      "    - set:\n"
+                      "        parameter: q1>ApertureP.x_min\n"
+                      "        value: PARAMETER + 0.01\n"
+                      "    - main:\n"
+                      "        kind: BeamLine\n"
+                      "        line:\n" +
+                      std::string(BEGIN_ENTRY) + "          - q1\n",
+                      "main");
+
+    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+    std::vector<std::string> msgs = problem_messages(lat);
+    REQUIRE(any_contains(msgs, "PARAMETER has no value -- the value of 'x_min' "
+                               "is null"));
+    REQUIRE_FALSE(any_contains(msgs, "unknown constant or variable"));
 
     free_all(lat);
 }

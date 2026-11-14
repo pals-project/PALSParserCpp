@@ -106,8 +106,9 @@ static bool has_null_default(const std::vector<std::string>& path) {
 // there is one, otherwise zero (an unwritten parameter of a known element is
 // zero, per s:lattice.expand). `pending` reports the third case -- the value is
 // still to be derived, so reading it is an error. When `want_default` is set
-// (the read is for `PARAMETER`), `null_default` reports a fourth: the parameter
-// is unwritten and its default is `null`, so there is no value to read.
+// (the read is for `PARAMETER`), `null_default` reports a fourth: the value is
+// `null`, either written as `null` or as the default of an unwritten parameter,
+// so there is no value to read (parameter-values-and-controllers.md, s:set).
 static bool read_set_operand(const ryml::Tree& t, size_t ele,
                              const std::vector<std::string>& path,
                              const EvalContext& ctx, bool pre, double& out,
@@ -117,6 +118,11 @@ static bool read_set_operand(const ryml::Tree& t, size_t ele,
     null_default = false;
     if (ele == ryml::NONE || path.empty()) return false;
     size_t node = resolve_param_path(t, ele, path);
+    if (want_default && node != ryml::NONE && t.has_val(node) &&
+        t.val_is_null(node)) {
+        null_default = true;
+        return false;
+    }
     if (node != ryml::NONE && t.has_val(node)) {
         bool was_expr = false;
         std::string body = strip_expr_wrapper(val_str(t, node), was_expr);
@@ -298,9 +304,9 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
             continue;
         }
         if (no_default) {
-            add_problem(problems, where + ": PARAMETER has no value -- '" +
-                                      matches.path.back() +
-                                      "' is not set and its default is null");
+            add_problem(problems, where + ": PARAMETER has no value -- the "
+                                      "value of '" + matches.path.back() +
+                                      "' is null");
             continue;
         }
         if (r.deferred) continue;  // random(); leave the parameter alone

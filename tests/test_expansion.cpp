@@ -674,6 +674,58 @@ TEST_CASE("a repeated line item's own values apply to every copy",
     delete_tree(lat.adjunct);
 }
 
+TEST_CASE("a repeated element defined in a line gives a copy per count",
+          "[lattices]") {
+    // The example of beamlines.md, s:repetition: `q1` is defined in the line
+    // and repeated, giving three quadrupoles named `q1`, each 0.8 long.
+    const char* doc =
+        "PALS:\n"
+        "  facility:\n"
+        "    - begin:\n"
+        "        kind: BeginningEle\n"
+        "        ReferenceP:\n"
+        "          species_ref: \"electron\"\n"
+        "          E_tot_ref: 1.0e9\n"
+        "    - my_line:\n"
+        "        kind: BeamLine\n"
+        "        line:\n"
+        "          - begin\n"
+        "          - q1:\n"
+        "              kind: Quadrupole\n"
+        "              repeat: 3\n"
+        "              length: 0.8\n"
+        "    - lat1:\n"
+        "        kind: Lattice\n"
+        "        branches:\n"
+        "          - my_line\n"
+        "    - use: \"lat1\"\n";
+
+    struct lattices lat = expand_PALS_string(doc, nullptr);
+    REQUIRE(lat.problems.count == 0);
+
+    YAMLNodeId line = find_by_key(lat.expanded, "line");
+    REQUIRE(line != YAML_NULL_ID);
+    REQUIRE(get_size(lat.expanded, line) == 4);
+    for (size_t i = 1; i < 4; i++) {
+        YAMLNodeId entry = get_child_by_index(lat.expanded, line, i);
+        YAMLNodeId q = get_child_by_index(lat.expanded, entry, 0);
+        REQUIRE(key_eq(lat.expanded, q, "q1"));
+        REQUIRE(val_eq(lat.expanded, get_child_by_key(lat.expanded, q, "kind"),
+                       "Quadrupole"));
+        REQUIRE(get_child_by_key(lat.expanded, q, "repeat") == YAML_NULL_ID);
+        REQUIRE(close(num_val(lat.expanded,
+                              get_child_by_key(lat.expanded, q, "length")),
+                      0.8));
+    }
+
+    free_lattice_problems(lat.problems);
+    delete_tree(lat.original);
+    delete_tree(lat.combined);
+    delete_tree(lat.expanded);
+    delete_tree(lat.full_expanded);
+    delete_tree(lat.adjunct);
+}
+
 // The names of the branch entries of an expanded document, in order. The
 // reflection cases below are entirely about order, so this is all they ask for.
 static std::vector<std::string> line_names(YAMLTreeHandle tree) {

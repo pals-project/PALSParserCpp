@@ -418,6 +418,108 @@ TEST_CASE("a Girder may support another Girder", "[placement]") {
               0.012, 0, 0);
 }
 
+TEST_CASE("nested Girder shifts compose, the supporting girder's last",
+          "[placement]") {
+    // `inner` moves q2 by 0.002 along x; `outer`, which supports `inner`, then
+    // turns both about the global origin. Applied the other way round, q2 would
+    // sit 0.002 along the global x instead.
+    const double a = 0.02, dx = 0.002;
+    Expanded x(doc("", GIRDER_LINE,
+                   "  girders:\n"
+                   "    outer:\n"
+                   "      kind: Girder\n"
+                   "      GirderP:\n"
+                   "        elements: inner\n"
+                   "      BodyShiftP:\n"
+                   "        y_rot: 0.02\n"
+                   "    inner:\n"
+                   "      kind: Girder\n"
+                   "      GirderP:\n"
+                   "        elements: q2\n"
+                   "      BodyShiftP:\n"
+                   "        x_offset: 0.002\n"));
+    REQUIRE(joined(x.lat) == "");
+    YAMLTreeHandle t = x.full();
+    chk_place(t, element(t, "q2"), "ShiftedFloorP",
+              dx * std::cos(a) + 2.5 * std::sin(a), 0,
+              -dx * std::sin(a) + 2.5 * std::cos(a), a);
+    // q1 is on neither girder.
+    chk_place(t, element(t, "q1"), "ShiftedFloorP", 0, 0, 1);
+    chk_place(x.lat.adjunct, girder(x.lat.adjunct, "inner"), "ShiftedFloorP",
+              dx * std::cos(a), 0, -dx * std::sin(a), a);
+}
+
+TEST_CASE("each Girder in the adjunct lists what it supports", "[placement]") {
+    // The repeated q1 gives two copies, told apart by their line index.
+    Expanded x(doc("    - qr:\n"
+                   "        kind: Quadrupole\n"
+                   "        length: 0.5\n",
+                   "          - qr:\n"
+                   "              repeat: 2\n" +
+                       std::string(GIRDER_LINE),
+                   "  girders:\n"
+                   "    outer:\n"
+                   "      kind: Girder\n"
+                   "      GirderP:\n"
+                   "        elements: q2, inner\n"
+                   "    inner:\n"
+                   "      kind: Girder\n"
+                   "      GirderP:\n"
+                   "        elements: qr, d1\n"));
+    REQUIRE(joined(x.lat) == "");
+    YAMLTreeHandle adj = x.lat.adjunct;
+    auto listed = [&](const char* g, const char* key) {
+        YAMLNodeId gp = get_child_by_key(adj, girder(adj, g), "GirderP");
+        REQUIRE(gp != YAML_NULL_ID);
+        YAMLNodeId l = get_child_by_key(adj, gp, key);
+        REQUIRE(l != YAML_NULL_ID);
+        char* s = node_to_string(adj, l);
+        std::string out = s;
+        yaml_free_string(s);
+        return out;
+    };
+    // Lattice order, `{branch}>>{element}: {index}`, whatever order
+    // GirderP.elements named them in.
+    REQUIRE(listed("inner", "supported_elements") ==
+            "supported_elements:\n"
+            "  - main>>qr: 2\n"
+            "  - main>>qr: 3\n"
+            "  - main>>d1: 4\n");
+    REQUIRE(listed("inner", "supported_girders") == "supported_girders: []\n");
+    REQUIRE(listed("outer", "supported_elements") ==
+            "supported_elements:\n  - main>>q2: 7\n");
+    REQUIRE(listed("outer", "supported_girders") ==
+            "supported_girders:\n  - inner\n");
+}
+
+TEST_CASE("a post_expansion set moves a Girder and what it supports",
+          "[placement]") {
+    // pals#466: the girders are matched before post_expansion runs, so a set
+    // there of a girder's BodyShiftP is a shift like one written on it.
+    Expanded x(doc("", GIRDER_LINE,
+                   "  girders:\n"
+                   "    g1:\n"
+                   "      kind: Girder\n"
+                   "      GirderP:\n"
+                   "        elements: q1:q2\n"
+                   "      BodyShiftP:\n"
+                   "        x_offset: 0.01\n"
+                   "  post_expansion:\n"
+                   "    - set:\n"
+                   "        parameter: g1>BodyShiftP.x_offset\n"
+                   "        value: PARAMETER + 0.02\n"
+                   "    - set:\n"
+                   "        parameter: g1>BodyShiftP.y_offset\n"
+                   "        value: 0.005\n"));
+    REQUIRE(joined(x.lat) == "");
+    YAMLTreeHandle t = x.full();
+    chk_place(t, element(t, "d1"), "ShiftedFloorP", 0, 0, 0);
+    chk_place(t, element(t, "q1"), "ShiftedFloorP", 0.03, 0.005, 1);
+    chk_place(t, element(t, "q2"), "ShiftedFloorP", 0.03, 0.005, 2.5);
+    chk_place(x.lat.adjunct, girder(x.lat.adjunct, "g1"), "ShiftedFloorP",
+              0.03, 0.005, 0);
+}
+
 TEST_CASE("Girder mistakes are reported", "[placement][problems]") {
     SECTION("an element supported twice") {
         Expanded x(doc("", GIRDER_LINE,

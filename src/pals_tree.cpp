@@ -2,6 +2,7 @@
 // pals_tree.h for what each does.
 
 #include "pals_tree.h"
+#include "pals_util.h"
 
 #include <cmath>
 #include <cstdio>
@@ -374,6 +375,19 @@ size_t line_entry_element(const ryml::Tree& t, size_t entry) {
     if (!t.is_map(entry)) return ryml::NONE;
     size_t def = t.first_child(entry);
     return (def != ryml::NONE && t.has_key(def)) ? def : ryml::NONE;
+}
+
+std::vector<size_t> girder_defs(const ryml::Tree& t) {
+    std::vector<size_t> out;
+    size_t pals = t.find_child(t.root_id(), ryml::to_csubstr("PALS"));
+    if (pals == ryml::NONE || !t.is_map(pals)) return out;
+    size_t g = t.find_child(pals, ryml::to_csubstr("girders"));
+    if (g == ryml::NONE || !t.is_map(g)) return out;
+    for (size_t c = t.first_child(g); c != ryml::NONE; c = t.next_sibling(c))
+        if (t.is_map(c) && t.has_key(c) &&
+            child_val_str(t, c, "kind") == "Girder")
+            out.push_back(c);
+    return out;
 }
 
 }  // namespace pals

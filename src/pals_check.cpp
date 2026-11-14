@@ -80,7 +80,7 @@ const std::map<std::string, std::set<std::string>>& group_params() {
         {"ForkP",
          {"to_line", "destination_element", "new_branch",
           "propagate_reference", "forked_to"}},
-        {"GirderP", {"elements"}},
+        {"GirderP", {"elements", "supported_elements", "supported_girders"}},
         {"MaterialP",
          {"name", "state", "density", "area_density", "radiation_length",
           "mean_excitation_energy", "components"}},

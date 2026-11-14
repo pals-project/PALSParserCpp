@@ -193,6 +193,10 @@ size_t branch_line(const ryml::Tree& t, size_t branch);
 // anonymous wrapper map. ryml::NONE for a bare (unresolved) name.
 size_t line_entry_element(const ryml::Tree& t, size_t entry);
 
+// The Girder definitions of the `girders` dict under the PALS node
+// (lattice-element-kinds.md, s:girder), in the order written.
+std::vector<size_t> girder_defs(const ryml::Tree& t);
+
 // Visit every element definition of every branch line. `fn(branch_index,
 // line_index, def, entry)` receives the element definition and the anonymous
 // seq-entry map wrapping it; the indices count every entry, including those

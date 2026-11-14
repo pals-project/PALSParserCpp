@@ -259,6 +259,7 @@ static void run_post_expansion(ParsedData& work, size_t lat_node,
                                const std::vector<size_t>& post,
                                const std::vector<DelayedValue>& delayed,
                                AuthoredParams& authored,
+                               GirderSupport& girders,
                                ProblemList& problems) {
     ryml::Tree& t = work.tree;
     std::vector<SetTarget> set_writes;
@@ -277,7 +278,7 @@ static void run_post_expansion(ParsedData& work, size_t lat_node,
     evaluate_expressions(t, lat_node, work.provenance, problems, nullptr,
                          &work.drivers);
     refresh_changed_delayed(t, back, work.provenance);
-    run_element_bookkeeper(t, lat_node, problems);
+    run_element_bookkeeper(t, lat_node, girders, problems);
 }
 
 // Expand the root lattice `lat_node` of the work tree and fill in everything
@@ -311,10 +312,16 @@ static void build_lattice(ParsedData& work, size_t lat_node,
     // parameters. This adds new ReferenceP/FloorP nodes, which carry no
     // provenance (like destination_pointer) and so simply do not appear in the
     // correspondence map.
-    run_element_bookkeeper(t, lat_node, problems);
+    //
+    // The first pass also matches the girders to the elements they support
+    // (s:lattice.expand), before the `post_expansion` list runs; the match
+    // stands through the second pass, which only places them again.
+    GirderSupport girders;
+    run_element_bookkeeper(t, lat_node, girders, problems);
 
     if (!post.empty())
-        run_post_expansion(work, lat_node, post, delayed, authored, problems);
+        run_post_expansion(work, lat_node, post, delayed, authored, girders,
+                           problems);
 
     // Last, so the line indices it records are the finished ones -- the
     // bookkeeper caps every branch with a `branch_end` element.

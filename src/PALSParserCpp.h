@@ -291,7 +291,10 @@ extern "C" {
  *           - `adjunct`: the rest of the document, keeping its PALS/facility
  * scaffolding: element and beamline definitions, `use` statements, constants,
  * `post_expansion`, `adjustments`, the girders (with the `FloorP` and
- * `ShiftedFloorP` computed for them), and any Lattice that was not the one
+ * `ShiftedFloorP` computed for them, and in `GirderP` what each supports:
+ * `supported_elements`, one `{branch}>>{element}: {index}` entry per lattice
+ * element in lattice order, and `supported_girders`, the girders' names), and
+ * any Lattice that was not the one
  * expanded. Definitions substituted into
  * the lattice are copies, so they appear in both trees.
  *         All five handles must be freed individually with delete_tree().

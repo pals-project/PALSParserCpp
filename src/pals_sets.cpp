@@ -508,10 +508,15 @@ void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
                              Provenance& prov, ProblemList& problems,
                              std::vector<SetTarget>* written) {
     if (lat_node == ryml::NONE) return;
+    // The girders stand outside the lattice but are as much a part of the
+    // machine, and a `post_expansion` set may move one (s:lattice.expand).
+    const std::vector<size_t> girders = girder_defs(t);
     for (size_t e : entries) {
         for (const SetCommand& cmd : entry_set_commands(t, e, problems)) {
             execute_set(t, cmd,
-                        match_element_parameters(t, lat_node, cmd.param), false,
+                        match_element_parameters(t, lat_node, cmd.param,
+                                                 girders),
+                        false,
                         make_expression_context(t, lat_node), prov, problems,
                         written);
         }

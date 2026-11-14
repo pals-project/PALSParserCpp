@@ -17,7 +17,8 @@
 //                           sub-lines, inherits, forks, multipass
 //   4. pals_evaluate.cpp    evaluate every expression; apply the controllers
 //   5. pals_bookkeeper.cpp  walk each branch: reference, floor, s-position,
-//                           dependent parameters
+//                           dependent parameters; match the girders to what
+//                           they support (first time only) and place them
 //   6. pals_sets.cpp        `post_expansion` sets, then 4 and 5 again
 //   7. pals_bookkeeper.cpp  record what each Fork connected to
 //
@@ -219,7 +220,8 @@ void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
                        Provenance& prov, ProblemList& problems);
 
 // Run the `set` commands of the `post_expansion` list against the expanded
-// lattice. `written`, when given, collects one target per parameter written.
+// lattice and the girders. `written`, when given, collects one target per
+// parameter written.
 void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
                              const std::vector<size_t>& entries,
                              Provenance& prov, ProblemList& problems,
@@ -229,12 +231,23 @@ void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
 // pals_bookkeeper.cpp: the per-branch walk
 // ------------------------------------------------------------
 
+// What each Girder supports (lattice-construction.md, s:lattice.expand): the
+// girders are matched to the elements they support once, after the first
+// bookkeeping pass and before the `post_expansion` list runs, and the match
+// then stands -- a later pass places the girders again, with any new
+// `BodyShiftP` or `CoordinateSetP`, but does not match them again.
+struct GirderSupport {
+    bool matched = false;
+    std::map<size_t, size_t> by;  // lattice element or girder -> its girder
+};
+
 // Walk every branch of the expanded lattice element by element, filling in the
 // reference parameters, floor placement, s-position, element index and
-// dependent parameters, capping each branch with a `branch_end`; then place the
-// girders and every element's ShiftedFloorP.
+// dependent parameters, capping each branch with a `branch_end`; then match
+// the girders if `girders` is not yet matched, place them, and fill in every
+// element's ShiftedFloorP.
 void run_element_bookkeeper(ryml::Tree& t, size_t lat_node,
-                            ProblemList& problems);
+                            GirderSupport& girders, ProblemList& problems);
 
 // Write `ForkP.forked_to` on every Fork and `ForkFromP` on its destination.
 void link_fork_connections(ryml::Tree& t, size_t lat_node);

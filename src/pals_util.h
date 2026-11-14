@@ -1,7 +1,7 @@
 #ifndef PALS_UTIL_H
 #define PALS_UTIL_H
 
-// Small helpers shared between the PALS expansion pipeline (pals_expand.cpp)
+// Small helpers shared between the PALS expansion pipeline (pals_pipeline.h)
 // and PALS name matching / parameter lookup (pals_match.cpp): dotted
 // parameter-path utilities and the expr(...) unwrapper. Not part of the public
 // C API declared in PALSParserCpp.h.

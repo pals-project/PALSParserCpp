@@ -1,4 +1,4 @@
-// Small helpers shared between pals_expand.cpp and pals_match.cpp. See
+// Small helpers shared between the expansion pipeline and pals_match.cpp. See
 // pals_util.h for what each does and why they are shared.
 
 #include "pals_util.h"

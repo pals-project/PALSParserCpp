@@ -137,21 +137,28 @@ TEST_CASE("parse_and_expand_PALS evaluates controller expressions",
                                                          "cur2")),
                   cur2));
 
-    // Each control `expression` is computed and its value stored in place.
+    // Each control `expression` keeps its text -- it says what the controller
+    // does when its variables change -- and the number it gives now is stored
+    // beside it as `value`.
     YAMLNodeId controls = get_child_by_key(lat.adjunct, ps27, "controls");
     YAMLNodeId c0 = get_child_by_index(lat.adjunct, controls, 0);
+    REQUIRE(val_eq(lat.adjunct, get_child_by_key(lat.adjunct, c0, "expression"),
+                   "0.075*sin(cur1) + 0.3*cur2"));
     REQUIRE(close(num_val(lat.adjunct,
-                          get_child_by_key(lat.adjunct, c0, "expression")),
+                          get_child_by_key(lat.adjunct, c0, "value")),
                   0.075 * std::sin(cur1) + 0.3 * cur2));
     // Control expressions may reference lattice constants (my_const = 2).
     YAMLNodeId c1 = get_child_by_index(lat.adjunct, controls, 1);
+    REQUIRE(val_eq(lat.adjunct, get_child_by_key(lat.adjunct, c1, "expression"),
+                   "cur1 * my_const"));
     REQUIRE(close(num_val(lat.adjunct,
-                          get_child_by_key(lat.adjunct, c1, "expression")),
+                          get_child_by_key(lat.adjunct, c1, "value")),
                   cur1 * 2.0));
-    // random_gauss() stays deferred, exactly as elsewhere.
+    // random_gauss() stays deferred, exactly as elsewhere, so has no value.
     YAMLNodeId c2 = get_child_by_index(lat.adjunct, controls, 2);
     REQUIRE(val_eq(lat.adjunct, get_child_by_key(lat.adjunct, c2, "expression"),
                    "0.01 + random_gauss()"));
+    REQUIRE(get_child_by_key(lat.adjunct, c2, "value") == YAML_NULL_ID);
 
     // The `parameter` target spec and `control_type` are names, left untouched,
     // and a MetaP rides along for documentation.
@@ -349,8 +356,10 @@ TEST_CASE("a RELATIVE controller leaves the lattice alone",
     YAMLNodeId chrom = facility_param(lat.adjunct, "chrom_a");
     YAMLNodeId cc0 = get_child_by_index(
         lat.adjunct, get_child_by_key(lat.adjunct, chrom, "controls"), 0);
+    REQUIRE(val_eq(lat.adjunct, get_child_by_key(lat.adjunct, cc0, "expression"),
+                   "5.62 * command + 0.02 * command^2"));
     REQUIRE(close(num_val(lat.adjunct,
-                          get_child_by_key(lat.adjunct, cc0, "expression")),
+                          get_child_by_key(lat.adjunct, cc0, "value")),
                   5.62 * 0.4 + 0.02 * 0.4 * 0.4));
 
     free_all(lat);

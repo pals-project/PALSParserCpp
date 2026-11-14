@@ -40,7 +40,8 @@ struct CtrlVar {
 // A controller `controls` entry: a `parameter` target and the `expression`
 // giving the value it is driven to.
 struct CtrlControl {
-    size_t expr_node = ryml::NONE;  // `expression` scalar, rewritten in place
+    size_t entry = ryml::NONE;      // the `controls` entry map
+    size_t expr_node = ryml::NONE;  // `expression` scalar, left as written
     std::string param;              // `parameter` target spec
     std::string text;               // expression source
     bool ok = false;                // evaluated to a number
@@ -177,6 +178,7 @@ static void read_controller(ryml::Tree& t, size_t node, Controllers& cs,
              entry = t.next_sibling(entry)) {
             if (!t.is_map(entry)) continue;
             CtrlControl cc;
+            cc.entry = entry;
             cc.param = scalar_text(
                 t, t.find_child(entry, ryml::to_csubstr("parameter")));
             cc.expr_node = t.find_child(entry, ryml::to_csubstr("expression"));
@@ -304,8 +306,8 @@ static std::vector<size_t> controller_order(const std::vector<Ctrl>& ctrls,
     return order;
 }
 
-// Evaluates every controller, in `order`, writing each variable's value and
-// each control expression's value back into the tree.
+// Evaluates every controller, in `order`, writing each variable's value back
+// into the tree and each control expression's value beside it, as `value`.
 //
 // Each controller's `variables` are a symbol table scoped to that controller.
 // An initial value is an immediate expression and may use any variable,
@@ -316,8 +318,7 @@ static std::vector<size_t> controller_order(const std::vector<Ctrl>& ctrls,
 static void evaluate_in_order(ryml::Tree& t, Controllers& cs,
                               const std::vector<size_t>& order,
                               const EvalContext& global,
-                              ProblemList& problems,
-                              std::vector<DelayedValue>* delayed) {
+                              ProblemList& problems) {
     std::vector<Ctrl>& ctrls = cs.ctrls;
     std::vector<CtrlVar>& vars = cs.vars;
 
@@ -434,16 +435,20 @@ static void evaluate_in_order(ryml::Tree& t, Controllers& cs,
             bool was_expr = false;
             std::string body = strip_expr_wrapper(cc.text, was_expr);
             EvalOutcome r = eval_expression(body, res, global.species);
+            // The `expression` keeps its text -- it is what the controller
+            // does when its variables change -- and the number it gives now
+            // goes beside it as `value`. A value from an earlier pass is
+            // stale either way: replaced when the expression evaluates, and
+            // dropped when it does not.
+            size_t stale = t.find_child(cc.entry, ryml::to_csubstr("value"));
             if (r.ok) {
                 cc.ok = true;
                 cc.value = r.value;
-                set_scalar_num(t, cc.expr_node, r.value);
-                // Control expressions are delayed (s:controller): kept so they
-                // are evaluated again after `post_expansion`.
-                if (delayed)
-                    delayed->push_back({cc.expr_node, "expression", cc.text,
-                                        format_double(r.value)});
-            } else if (!r.deferred) {
+                set_num_child(t, cc.entry, "value", r.value);
+            } else if (stale != ryml::NONE) {
+                t.remove(stale);
+            }
+            if (!r.ok && !r.deferred) {
                 std::string msg = "controller '" + c.name +
                                   "' control expression could not be "
                                   "evaluated: " + body;
@@ -608,7 +613,8 @@ static void record_drivers(const ryml::Tree& t, const TargetMap& targets,
 // Evaluates the controllers and applies them to the expanded lattice.
 //
 // Every control `expression` is computed with its controller's symbol table and
-// the number written back into the control entry, and the ABSOLUTE controllers
+// the number written into the control entry as `value`, beside the expression
+// text, which is left as written; and the ABSOLUTE controllers
 // are applied to the lattice parameters they drive. `lat_node` is the expanded
 // lattice; parameter targets are matched inside it, which is what keeps a
 // controller from also driving the unexpanded element definitions still sitting
@@ -617,13 +623,12 @@ static void record_drivers(const ryml::Tree& t, const TargetMap& targets,
 void evaluate_controllers(ryml::Tree& t, size_t lat_node,
                           const EvalContext& global, Provenance& prov,
                           ProblemList& problems,
-                          std::vector<DelayedValue>* delayed,
                           std::map<size_t, std::vector<size_t>>* drivers) {
     Controllers cs = read_controllers(t, problems);
     if (cs.ctrls.empty()) return;
 
     std::vector<size_t> order = controller_order(cs.ctrls, problems);
-    evaluate_in_order(t, cs, order, global, problems, delayed);
+    evaluate_in_order(t, cs, order, global, problems);
     if (lat_node == ryml::NONE) return;
 
     TargetMap targets = gather_targets(t, lat_node, cs, order, problems);

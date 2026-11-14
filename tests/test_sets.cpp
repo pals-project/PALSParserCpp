@@ -478,6 +478,42 @@ TEST_CASE("a facility set writes the single definition",
     free_all(lat);
 }
 
+TEST_CASE("a facility set on a repeated line item reaches every copy",
+          "[expr][lattices][set]") {
+    // The set writes Kn1L on the line item, not the definition. `repeat` then
+    // copies the item, so all three copies carry 0.9 (beamlines.md,
+    // s:repetition). It used to copy the definition instead, so the set had no
+    // effect and nothing was reported.
+    const std::string doc =
+        facility_file("    - q1:\n"
+                      "        kind: Quadrupole\n"
+                      "        length: 0.5\n"
+                      "        MagneticMultipoleP:\n"
+                      "          Kn1L: 0.375\n"
+                      "    - main:\n"
+                      "        kind: BeamLine\n"
+                      "        line:\n" +
+                      std::string(BEGIN_ENTRY) +
+                      "          - q1:\n"
+                      "              repeat: 3\n"
+                      "    - set:\n"
+                      "        parameter: main>>q1>MagneticMultipoleP.Kn1L\n"
+                      "        value: 0.9\n",
+                      "main");
+
+    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(joined(lat) == "");
+    for (size_t i = 0; i < 3; ++i) {
+        REQUIRE(close(nth_param(lat.full_expanded, "q1", i, "MagneticMultipoleP",
+                                "Kn1L"),
+                      0.9));
+        REQUIRE(close(nth_param(lat.full_expanded, "q1", i, nullptr, "length"),
+                      0.5));
+    }
+
+    free_all(lat);
+}
+
 TEST_CASE("a post_expansion set reaches each expanded copy",
           "[expr][lattices][set]") {
     // The point of `post_expansion`: with the lattice built, the three copies of

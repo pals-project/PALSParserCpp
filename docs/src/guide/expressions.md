@@ -125,7 +125,8 @@ compute and reading it beforehand is an error:
 `PARAMETER` reads an unwritten parameter as its default value. For most
 parameters this is zero. Where the default is `null` (for example
 `ApertureP.x_min`, `BendP.e1` or `RFP.frequency`), there is no value to read,
-and using `PARAMETER` is an error.
+and using `PARAMETER` is an error. The same holds for a parameter written as
+`null`.
 
 This matters for a `BeamLine` line item that only uses an element, such as
 `- q1`. Before branch expansion such an item has only the values written on

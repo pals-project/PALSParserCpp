@@ -1123,3 +1123,87 @@ TEST_CASE("a random_seed must be an integer",
         free_all(lat);
     }
 }
+
+namespace {
+
+// The `PALS: random_seeds` list of the adjunct, as (seed, at, statement)
+// strings; empty when there is none.
+std::vector<std::string> recorded_seeds(const struct lattices& lat,
+                                        std::vector<std::string>* seeds = nullptr) {
+    std::vector<std::string> out;
+    YAMLNodeId pals = get_child_by_key(lat.adjunct, get_root(lat.adjunct),
+                                       "PALS");
+    YAMLNodeId list = get_child_by_key(lat.adjunct, pals, "random_seeds");
+    if (list == YAML_NULL_ID) return out;
+    for (size_t i = 0; i < get_size(lat.adjunct, list); ++i) {
+        YAMLNodeId r = get_child_by_index(lat.adjunct, list, i);
+        auto str = [&](const char* k) -> std::string {
+            YAMLNodeId n = get_child_by_key(lat.adjunct, r, k);
+            if (n == YAML_NULL_ID) return "-";
+            char* v = as_string(lat.adjunct, n);
+            std::string s = v ? v : "";
+            yaml_free_string(v);
+            return s;
+        };
+        if (seeds) seeds->push_back(str("seed"));
+        out.push_back(str("at") + " " + str("statement"));
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("the seeds the system chose are recorded in the adjunct",
+          "[expr][lattices][set][random]") {
+    // No random_seed: the start seed is recorded, and putting it at the head
+    // of `facility` repeats the run.
+    std::vector<std::string> seeds;
+    std::string doc = seeded_doc("", "");
+    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(recorded_seeds(lat, &seeds) == std::vector<std::string>{"start -"});
+    free_all(lat);
+    std::vector<double> first = draws(doc);  // another run, another seed
+    seeds.clear();
+    lat = expand_PALS_string(doc.c_str(), nullptr);
+    recorded_seeds(lat, &seeds);
+    std::vector<double> want;
+    want.push_back(one_param(lat.full_expanded, "q1", nullptr, "length"));
+    free_all(lat);
+    std::vector<double> again =
+        draws(seeded_doc("    - random_seed: " + seeds[0] + "\n", ""));
+    REQUIRE(again[0] == want[0]);
+    REQUIRE(again[0] != first[0]);
+
+    // A zero seed in post_expansion: that one is recorded, by statement, and
+    // the start seed only if anything was drawn under it. Giving the recorded
+    // seed back repeats the post_expansion draws.
+    seeds.clear();
+    doc = seeded_doc("    - random_seed: 3\n",
+                     "    - random_seed: 9\n    - random_seed: 0\n");
+    lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(recorded_seeds(lat, &seeds) ==
+            std::vector<std::string>{"post_expansion 1"});
+    std::vector<double> kn;
+    for (size_t i = 0; i < 3; ++i)
+        kn.push_back(nth_param(lat.full_expanded, "q1", i, "MagneticMultipoleP",
+                               "Kn1L"));
+    free_all(lat);
+    std::vector<double> repeat = draws(seeded_doc(
+        "    - random_seed: 3\n",
+        "    - random_seed: 9\n    - random_seed: " + seeds[0] + "\n"));
+    REQUIRE(std::vector<double>(repeat.begin() + 2, repeat.end()) == kn);
+
+    // Nothing drawn, nothing recorded.
+    const std::string plain =
+        facility_file("    - d:\n"
+                      "        kind: Drift\n"
+                      "        length: 1\n"
+                      "    - main:\n"
+                      "        kind: BeamLine\n"
+                      "        line:\n" +
+                          std::string(BEGIN_ENTRY) + "          - d\n",
+                      "main");
+    lat = expand_PALS_string(plain.c_str(), nullptr);
+    REQUIRE(recorded_seeds(lat).empty());
+    free_all(lat);
+}

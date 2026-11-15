@@ -17,6 +17,7 @@
 #include <functional>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace pals {
 
@@ -69,15 +70,39 @@ using SpeciesLookup =
     std::function<bool(const std::string& name, std::string& out)>;
 
 /**
+ * @brief A reset of the random number sequence: where it was made, the seed it
+ * used, whether the system chose that seed, and how many numbers were drawn
+ * before the next reset.
+ * @ingroup expr
+ */
+struct SeedRecord {
+  std::string list;          ///< "facility", "post_expansion", or "" (start)
+  size_t statement = 0;      ///< which `random_seed` of `list`, from 0
+  std::uint64_t seed = 0;    ///< the seed used
+  bool chosen = false;       ///< true if the system chose it
+  std::uint64_t draws = 0;   ///< numbers drawn under it
+};
+
+/**
  * @brief Reset the sequence random(), random_gauss() and random_gauss(sig_cut)
- * draw from (parameter-values-and-controllers.md, s:random.seed).
+ * draw from (parameter-values-and-controllers.md, s:random.seed), and log the
+ * reset (see seed_log()).
  * @ingroup expr
  *
  * The same nonzero seed gives the same draws from this parser. Zero asks for a
- * seed chosen by the system, so the draws differ from run to run. The sequence
- * is per thread.
+ * seed chosen by the system, so the draws differ from run to run; the seed it
+ * chose is returned, and logged, so the run can be repeated. `list` and
+ * `statement` say which statement asked: `list` empty for the reset an
+ * expansion starts with. The sequence and the log are per thread.
  */
-void seed_random(std::uint64_t seed);
+std::uint64_t seed_random(std::uint64_t seed, const std::string& list = "",
+                          size_t statement = 0);
+
+/// @brief Empty the log of resets. @ingroup expr
+void clear_seed_log();
+
+/// @brief The resets since the log was last emptied, in order. @ingroup expr
+const std::vector<SeedRecord>& seed_log();
 
 /**
  * @brief Evaluates `text` as a PALS mathematical expression.

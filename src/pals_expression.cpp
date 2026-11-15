@@ -46,6 +46,11 @@ std::mt19937_64& generator() {
   return gen;
 }
 
+std::vector<SeedRecord>& mutable_seed_log() {
+  thread_local std::vector<SeedRecord> log;
+  return log;
+}
+
 // std::numbers::pi is C++20; keep this a plain constant for C++17.
 constexpr double kPi = 3.14159265358979323846;
 
@@ -348,6 +353,8 @@ class Parser {
   // say, the misalignments.
   static double draw(const std::string& fn, const std::vector<double>& a) {
     std::mt19937_64& gen = generator();
+    std::vector<SeedRecord>& log = mutable_seed_log();
+    if (!log.empty()) ++log.back().draws;
     if (fn == "random") {
       if (!a.empty())
         throw ParseError{"'random' takes no arguments, got " +
@@ -469,13 +476,22 @@ bool builtin_constant(const std::string& name, double& out) {
   return false;
 }
 
-void seed_random(std::uint64_t seed) {
-  if (seed == 0) {
+std::uint64_t seed_random(std::uint64_t seed, const std::string& list,
+                          size_t statement) {
+  bool chosen = seed == 0;
+  // Never zero, so the seed recorded is one a `random_seed` can give back.
+  while (seed == 0) {
     std::random_device rd;
     seed = (std::uint64_t(rd()) << 32) ^ rd();
   }
   generator().seed(seed);
+  mutable_seed_log().push_back({list, statement, seed, chosen, 0});
+  return seed;
 }
+
+void clear_seed_log() { mutable_seed_log().clear(); }
+
+const std::vector<SeedRecord>& seed_log() { return mutable_seed_log(); }
 
 EvalOutcome eval_expression(const std::string& text, const SymbolLookup& lookup,
                             const SpeciesLookup& species) {

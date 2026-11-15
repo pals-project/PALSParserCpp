@@ -343,6 +343,39 @@ static void build_lattice(ParsedData& work, size_t lat_node,
 // inputs as `expanded`, and `adjunct` takes everything the lattice left behind.
 // All three record provenance straight back to `combined`, so the work tree can
 // be discarded.
+// Record in the adjunct, as `PALS: random_seeds`, each seed the system chose
+// that anything was drawn under, so the run can be repeated: `at: start` is the
+// seed the expansion began with (a `random_seed` of it at the head of
+// `facility` repeats it), and `at: facility` or `at: post_expansion` with
+// `statement: n` is the n-th (from 0) `random_seed` of that list, a zero one.
+static void record_chosen_seeds(ryml::Tree& t) {
+    std::vector<SeedRecord> used;
+    for (const SeedRecord& r : seed_log())
+        if (r.chosen && r.draws > 0) used.push_back(r);
+    if (used.empty()) return;
+    size_t pals = t.find_child(t.root_id(), ryml::to_csubstr("PALS"));
+    if (pals == ryml::NONE || !t.is_map(pals)) return;
+    size_t list = t.append_child(pals);
+    t.to_seq(list, t.to_arena(ryml::to_csubstr("random_seeds")));
+    for (const SeedRecord& r : used) {
+        size_t item = t.append_child(list);
+        t.to_map(item);
+        size_t s = t.append_child(item);
+        t.to_keyval(s, ryml::to_csubstr("seed"),
+                    t.to_arena(ryml::to_csubstr(std::to_string(r.seed))));
+        size_t at = t.append_child(item);
+        t.to_keyval(at, ryml::to_csubstr("at"),
+                    t.to_arena(ryml::to_csubstr(r.list.empty() ? "start"
+                                                               : r.list)));
+        if (!r.list.empty()) {
+            size_t n = t.append_child(item);
+            t.to_keyval(n, ryml::to_csubstr("statement"),
+                        t.to_arena(ryml::to_csubstr(
+                            std::to_string(r.statement))));
+        }
+    }
+}
+
 static void make_expanded_and_adjunct(ParsedData* comb,
                                        const char* root_lattice,
                                        ProblemList& problems,
@@ -370,9 +403,12 @@ static void make_expanded_and_adjunct(ParsedData* comb,
     // settled at their place in the list.
     // Every expansion starts its random number sequence afresh, from a seed the
     // system chooses, until a `random_seed` statement says otherwise
-    // (s:random.seed): one expansion's seed does not carry into the next.
-    seed_random(0);
+    // (s:random.seed): one expansion's seed does not carry into the next. The
+    // reset comes just before the walk, so a `random_seed` of the seed it
+    // chose, put at the head of `facility`, repeats the run.
+    clear_seed_log();
     check_definitions(t, problems);
+    seed_random(0);
     run_facility_list(t, pals_list_entries(t, "facility"), work.provenance,
                       problems);
     const std::vector<size_t> post = pals_list_entries(t, "post_expansion");
@@ -444,6 +480,8 @@ static void make_expanded_and_adjunct(ParsedData* comb,
         if (el != ryml::NONE) remove_tracked(lt, el, left->provenance);
         if (lt.num_children(gp) == 0) remove_tracked(lt, gp, left->provenance);
     }
+
+    record_chosen_seeds(left->tree);
 
     expanded_out = mini;
     full_expanded_out = full;

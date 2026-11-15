@@ -467,13 +467,16 @@ static void resolve_definition_inherits(
 // s:random.seed): when `entry` is one, reset the random number sequence to the
 // seed it gives and return true. The seed is an integer; zero asks for one the
 // system chooses. One that is not an integer is reported and leaves the
-// sequence alone. `list` names the list it is in, for the message.
+// sequence alone. `list` names the list it is in, and `count` counts the
+// statements met in it so far, so the reset is logged as the one it is.
 static bool run_random_seed(const ryml::Tree& t, size_t entry,
-                            const char* list, ProblemList& problems) {
+                            const char* list, size_t& count,
+                            ProblemList& problems) {
     size_t c = entry_content(t, entry);
     if (c == ryml::NONE || !t.has_key(c) ||
         t.key(c) != ryml::to_csubstr("random_seed"))
         return false;
+    size_t statement = count++;
     std::string text = t.has_val(c) ? val_str(t, c) : "";
     const char* s = text.c_str();
     char* end = nullptr;
@@ -494,7 +497,7 @@ static bool run_random_seed(const ryml::Tree& t, size_t entry,
                     "random_seed");
         return true;
     }
-    seed_random(seed);
+    seed_random(seed, list, statement);
     return true;
 }
 
@@ -528,10 +531,11 @@ void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
             substitute_values(t, g, ctx, problems, immediate);
     };
 
+    size_t seeds = 0;  // `random_seed` statements so far
     std::map<std::string, size_t> before;  // facility definitions so far
     std::vector<size_t> defined;
     for (size_t entry : entries) {
-        if (run_random_seed(t, entry, "facility", problems)) continue;
+        if (run_random_seed(t, entry, "facility", seeds, problems)) continue;
         std::vector<SetCommand> cmds = entry_set_commands(t, entry, problems);
         if (cmds.empty()) {
             size_t def = entry_content(t, entry);
@@ -574,8 +578,9 @@ void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
     const std::vector<size_t> girders = girder_defs(t);
     SubstituteMode immediate;
     immediate.immediate_only = true;
+    size_t seeds = 0;
     for (size_t e : entries) {
-        if (run_random_seed(t, e, "post_expansion", problems)) continue;
+        if (run_random_seed(t, e, "post_expansion", seeds, problems)) continue;
         std::vector<SetCommand> cmds = entry_set_commands(t, e, problems);
         if (cmds.empty()) {
             // A definition: evaluated here, so a random() in it draws after

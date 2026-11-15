@@ -292,7 +292,7 @@ extern "C" {
  * scaffolding: element and beamline definitions, `use` statements, constants,
  * the controllers (each `controls` entry keeping its `expression` as written,
  * with the number it evaluates to beside it as `value`; none when it cannot be
- * evaluated, or is deferred like `random()`), `post_expansion`, `adjustments`,
+ * evaluated), `post_expansion`, `adjustments`,
  * the girders (with the `FloorP` and
  * `ShiftedFloorP` computed for them, and, in place of the `GirderP.elements`
  * that asked for it, a `supported` list on each girder of what it holds up
@@ -365,12 +365,12 @@ YAML_API void free_lattice_problems(struct problem_list problems);
  *
  * This entry point evaluates a standalone string: user-defined constants and
  * variables are NOT in scope (use parse_and_expand_PALS() for whole-lattice
- * evaluation, which resolves them). Expressions containing random() /
- * random_gauss() are treated as non-evaluable here.
+ * evaluation, which resolves them). random() and random_gauss() give a fresh
+ * draw on each call.
  *
  * @param expr Null-terminated expression string.
  * @param ok   Optional out-param. Set to true on success, false on a parse
- *             error, unknown identifier/species, deferred random(), or a
+ *             error, unknown identifier/species, or a
  *             non-finite result. May be NULL.
  * @return The evaluated value on success, or 0.0 on failure.
  */

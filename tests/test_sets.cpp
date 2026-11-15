@@ -837,30 +837,57 @@ TEST_CASE("a set whose target matches nothing is reported",
     free_all(lat);
 }
 
-TEST_CASE("a set with a random value is deferred", "[expr][lattices][set]") {
-    // random()/random_gauss() are deferred everywhere so the expanded tree stays
-    // reproducible; a set driven by one leaves its parameter alone.
-    const std::string doc =
-        facility_file("    - Q1:\n"
-                      "        kind: Quadrupole\n"
-                      "        length: 0.5\n"
-                      "        MagneticMultipoleP:\n"
-                      "          Kn1L: 0.375\n"
-                      "    - set:\n"
-                      "        parameter: Q1>MagneticMultipoleP.Kn1L\n"
-                      "        value: PARAMETER * (1 + 1e-4*random_gauss())\n"
-                      "    - main:\n"
-                      "        kind: BeamLine\n"
-                      "        line:\n" +
-                      std::string(BEGIN_ENTRY) + "          - Q1\n",
-                      "main");
+TEST_CASE("a post_expansion set gives each copy its own random error",
+          "[expr][lattices][set]") {
+    // top-level.md (s:facility): after expansion there are three `q1`, and the
+    // set draws for each of them; before expansion it writes the one
+    // definition, so all three would share a draw.
+    auto doc = [](bool post) {
+        const std::string set =
+            "    - set:\n"
+            "        parameter: q1>MagneticMultipoleP.Kn1L\n"
+            "        value: PARAMETER * (1 + 1e-4*random_gauss())\n";
+        return facility_file("    - q1:\n"
+                             "        kind: Quadrupole\n"
+                             "        length: 0.5\n"
+                             "        MagneticMultipoleP:\n"
+                             "          Kn1L: 0.375\n" +
+                                 (post ? "" : set) +
+                                 "    - main:\n"
+                                 "        kind: BeamLine\n"
+                                 "        line:\n" +
+                                 std::string(BEGIN_ENTRY) +
+                                 "          - q1:\n"
+                                 "              repeat: 3\n",
+                             "main", post ? set : "");
+    };
+    auto kn1l = [](const struct lattices& lat) {
+        std::set<double> v;
+        for (size_t i = 0; i < 3; ++i) {
+            double k = nth_param(lat.full_expanded, "q1", i,
+                                 "MagneticMultipoleP", "Kn1L");
+            REQUIRE(std::fabs(k - 0.375) < 0.375 * 1e-4 * 10);
+            v.insert(k);
+        }
+        return v;
+    };
 
-    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
-    REQUIRE(joined(lat) == "");
-    REQUIRE(close(one_param(lat.full_expanded, "Q1", "MagneticMultipoleP", "Kn1L"),
-                  0.375));
+    struct lattices post = expand_PALS_string(doc(true).c_str(), nullptr);
+    REQUIRE(joined(post) == "");
+    std::set<double> drawn = kn1l(post);
+    REQUIRE(drawn.size() == 3);
 
-    free_all(lat);
+    // Not reproducible: expanding again is another sample.
+    struct lattices again = expand_PALS_string(doc(true).c_str(), nullptr);
+    REQUIRE(kn1l(again) != drawn);
+
+    struct lattices pre = expand_PALS_string(doc(false).c_str(), nullptr);
+    REQUIRE(joined(pre) == "");
+    REQUIRE(kn1l(pre).size() == 1);
+
+    free_all(post);
+    free_all(again);
+    free_all(pre);
 }
 
 TEST_CASE("malformed sets are reported", "[expr][lattices][set][problems]") {

@@ -205,8 +205,7 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
     }
     // "the true error is absolute_error + relative_error * |value|" -- but the
     // standard does not say how that error is distributed, and this library
-    // never invents randomness (random()/random_gauss() are deferred for the
-    // same reason). The deterministic value is written and the error is not.
+    // does not choose one for it. The value is written without the error.
     if (cmd.has_error)
         add_problem(problems,
                     what +
@@ -309,7 +308,6 @@ static void execute_set(ryml::Tree& t, const SetCommand& cmd,
                                       "' is null");
             continue;
         }
-        if (r.deferred) continue;  // random(); leave the parameter alone
         if (!r.ok) {
             std::string msg = where + ": could not evaluate value: " + cmd.value;
             if (!r.error.empty()) msg += " -- " + r.error;

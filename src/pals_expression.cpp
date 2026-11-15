@@ -18,6 +18,10 @@
  * quoted species name (e.g. `mass_of("#3He")`), not a numeric sub-expression, so
  * their argument is read as raw text and passed to
  * AtomicAndPhysicalConstantsCLib. An unquoted species name is an error.
+ *
+ * random(), random_gauss() and random_gauss(sig_cut) give a fresh draw each
+ * time they are evaluated, from a generator seeded by the system, so they are
+ * not reproducible from run to run.
  */
 
 #include "pals_expression.h"
@@ -25,6 +29,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <random>
 #include <stdexcept>
 #include <vector>
 
@@ -64,14 +69,11 @@ class Parser {
     return v;
   }
 
-  bool deferred() const { return deferred_; }
-
  private:
   const std::string& s_;
   const SymbolLookup& lookup_;
   const SpeciesLookup& species_;
   size_t pos_ = 0;
-  bool deferred_ = false;
 
   void skip_ws() {
     while (pos_ < s_.size() &&
@@ -328,14 +330,37 @@ class Parser {
         throw ParseError{"unknown species '" + sp + "'"};
       }
     }
-    // random()/random_gauss() cannot be evaluated reproducibly: mark deferred
-    // but still consume the argument list so parsing completes.
-    if (fn == "random" || fn == "random_gauss") {
-      arg_list();
-      deferred_ = true;
-      return 0.0;  // unused when deferred
-    }
+    if (fn == "random" || fn == "random_gauss") return draw(fn, arg_list());
     return apply(fn, arg_list());
+  }
+
+  // A fresh draw on every call. The generator is seeded from the system's
+  // entropy source, so an expansion with random() in it differs from run to
+  // run -- that is the point: each run is another sample of, say, the
+  // misalignments.
+  static double draw(const std::string& fn, const std::vector<double>& a) {
+    thread_local std::mt19937_64 gen{std::random_device{}()};
+    if (fn == "random") {
+      if (!a.empty())
+        throw ParseError{"'random' takes no arguments, got " +
+                         std::to_string(a.size())};
+      return std::uniform_real_distribution<double>(0.0, 1.0)(gen);
+    }
+    if (a.size() > 1)
+      throw ParseError{"'random_gauss' takes at most one argument, got " +
+                       std::to_string(a.size())};
+    std::normal_distribution<double> gauss(0.0, 1.0);
+    if (a.empty()) return gauss(gen);
+    // random_gauss(sig_cut): the tail beyond sig_cut sigma is cut off, so draw
+    // again until the value falls inside it.
+    double cut = a[0];
+    if (!(cut > 0))
+      throw ParseError{"'random_gauss' cutoff must be positive, got " +
+                       std::to_string(cut)};
+    for (;;) {
+      double x = gauss(gen);
+      if (std::fabs(x) <= cut) return x;
+    }
   }
 
   static double apply(const std::string& fn, const std::vector<double>& a) {
@@ -442,10 +467,6 @@ EvalOutcome eval_expression(const std::string& text, const SymbolLookup& lookup,
   try {
     Parser p(text, lookup, species);
     double v = p.parse();
-    if (p.deferred()) {
-      r.deferred = true;
-      return r;
-    }
     if (!std::isfinite(v)) {  // ok stays false
       r.error = "the result is not a finite number";
       return r;

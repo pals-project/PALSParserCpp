@@ -49,8 +49,8 @@ static std::string short_location(const ryml::Tree& t, size_t node) {
 // `expr(...)`-delayed alike, per the standard's evaluation model as applied to
 // the expanded tree). Values that are not expressions -- element/line name
 // references, `kind:` names, booleans, etc. -- fail to evaluate and are left
-// untouched. Expressions containing random()/random_gauss() are deferred
-// (kept as text) so the expanded tree stays reproducible.
+// untouched. random()/random_gauss() draw afresh each time they are evaluated,
+// so an expansion that uses them differs from run to run.
 //
 // The math, functions, built-in constants, and particle-data functions
 // (mass_of/charge_of/anomalous_moment_of, from AtomicAndPhysicalConstantsCLib)
@@ -282,14 +282,14 @@ static void substitute_scalar(ryml::Tree& t, size_t node, const EvalContext& ctx
     } else if (mode.immediate_only) {
         // Not evaluable yet -- it may need what expansion computes. The pass
         // after expansion evaluates it, or reports it.
-    } else if (!r.deferred && ctx.species && ctx.species(body, sp)) {
+    } else if (ctx.species && ctx.species(body, sp)) {
         // A bare identifier that names a species-valued constant or variable
         // (e.g. `species_ref: species` with `species: "#3He"`) is replaced by
         // its species-name string. Double-quoted so a leading `#` survives
         // YAML's comment rule on re-emit.
         t.set_val(node, t.to_arena(ryml::to_csubstr(sp)));
         t.set_val_style(node, ryml::VAL_DQUO);
-    } else if (!r.deferred && looks_like_expression(body, was_expr)) {
+    } else if (looks_like_expression(body, was_expr)) {
         std::string loc = short_location(t, node);
         std::string msg = "could not evaluate expression";
         if (!loc.empty()) msg += " for " + loc;

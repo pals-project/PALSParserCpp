@@ -15,7 +15,9 @@
  */
 
 #include <functional>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace pals {
 
@@ -27,23 +29,19 @@ namespace pals {
  * @ingroup expr
  *
  *   - `ok=true`                  -> `value` holds the finite numeric result.
- *   - `deferred=true`            -> the expression contains
- *     random()/random_gauss(), which must stay unevaluated to keep the expanded
- *     tree reproducible. `value` is unspecified.
- *   - `ok=false, deferred=false` -> not a (valid) evaluable expression: parse
+ *   - `ok=false`                 -> not a (valid) evaluable expression: parse
  *     error, unknown identifier, unknown species, or a non-finite result. The
  *     caller should leave the original text untouched, and @ref error says
  *     which of those it was.
  */
 struct EvalOutcome {
   bool ok = false;        ///< True when @ref value holds a finite result.
-  bool deferred = false;  ///< True when evaluation was deferred (random()).
   double value = 0.0;     ///< The result; valid only when @ref ok is true.
   /**
    * Why evaluation failed, naming the offending symbol -- "unknown constant or
    * variable 'C_LIGHT'; did you mean 'c_light'?". A lower-case sentence
    * fragment, meant to be appended to a caller's own message. Empty when @ref
-   * ok or @ref deferred.
+   * @ref ok.
    */
   std::string error;
 };
@@ -70,6 +68,41 @@ using SymbolLookup = std::function<bool(const std::string& name, double& out)>;
  */
 using SpeciesLookup =
     std::function<bool(const std::string& name, std::string& out)>;
+
+/**
+ * @brief A reset of the random number sequence: where it was made, the seed it
+ * used, whether the system chose that seed, and how many numbers were drawn
+ * before the next reset.
+ * @ingroup expr
+ */
+struct SeedRecord {
+  std::string list;          ///< "facility", "post_expansion", or "" (start)
+  size_t statement = 0;      ///< which `random_seed` of `list`, from 0
+  std::uint64_t seed = 0;    ///< the seed used
+  bool chosen = false;       ///< true if the system chose it
+  std::uint64_t draws = 0;   ///< numbers drawn under it
+};
+
+/**
+ * @brief Reset the sequence random(), random_gauss() and random_gauss(sig_cut)
+ * draw from (parameter-values-and-controllers.md, s:random.seed), and log the
+ * reset (see seed_log()).
+ * @ingroup expr
+ *
+ * The same nonzero seed gives the same draws from this parser. Zero asks for a
+ * seed chosen by the system, so the draws differ from run to run; the seed it
+ * chose is returned, and logged, so the run can be repeated. `list` and
+ * `statement` say which statement asked: `list` empty for the reset an
+ * expansion starts with. The sequence and the log are per thread.
+ */
+std::uint64_t seed_random(std::uint64_t seed, const std::string& list = "",
+                          size_t statement = 0);
+
+/// @brief Empty the log of resets. @ingroup expr
+void clear_seed_log();
+
+/// @brief The resets since the log was last emptied, in order. @ingroup expr
+const std::vector<SeedRecord>& seed_log();
 
 /**
  * @brief Evaluates `text` as a PALS mathematical expression.

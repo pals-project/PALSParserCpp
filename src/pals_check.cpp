@@ -746,11 +746,12 @@ void collect_names(const ryml::Tree& t, size_t node,
                 if (!t.is_map(e)) continue;
                 size_t def = t.first_child(e);
                 if (def == ryml::NONE || !t.has_key(def)) continue;
-                // `include`, `set`, `sets`, `constants`, `variables` and `use`
-                // are directives, not names.
+                // `include`, `set`, `sets`, `constants`, `variables`, `use`
+                // and `random_seed` are directives, not names.
                 std::string dk(t.key(def).str, t.key(def).len);
                 if (dk == "include" || dk == "set" || dk == "sets" ||
-                    dk == "constants" || dk == "variables" || dk == "use")
+                    dk == "constants" || dk == "variables" || dk == "use" ||
+                    dk == "random_seed")
                     continue;
                 take(def);
             }

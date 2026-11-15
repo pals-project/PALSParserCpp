@@ -154,11 +154,20 @@ TEST_CASE("parse_and_expand_PALS evaluates controller expressions",
     REQUIRE(close(num_val(lat.adjunct,
                           get_child_by_key(lat.adjunct, c1, "value")),
                   cur1 * 2.0));
-    // random_gauss() stays deferred, exactly as elsewhere, so has no value.
+    // random_gauss() is drawn like any other function, and the draw is the
+    // value the ABSOLUTE controller gives Qc.
     YAMLNodeId c2 = get_child_by_index(lat.adjunct, controls, 2);
     REQUIRE(val_eq(lat.adjunct, get_child_by_key(lat.adjunct, c2, "expression"),
                    "0.01 + random_gauss()"));
-    REQUIRE(get_child_by_key(lat.adjunct, c2, "value") == YAML_NULL_ID);
+    double drawn =
+        num_val(lat.adjunct, get_child_by_key(lat.adjunct, c2, "value"));
+    REQUIRE(std::fabs(drawn - 0.01) < 10);
+    YAMLNodeId qc = find_by_key(lat.full_expanded, "Qc");
+    YAMLNodeId qc_mmp = get_child_by_key(lat.full_expanded, qc,
+                                         "MagneticMultipoleP");
+    REQUIRE(num_val(lat.full_expanded,
+                    get_child_by_key(lat.full_expanded, qc_mmp, "Kn0")) ==
+            drawn);
 
     // The `parameter` target spec and `control_type` are names, left untouched,
     // and a MetaP rides along for documentation.

@@ -837,30 +837,57 @@ TEST_CASE("a set whose target matches nothing is reported",
     free_all(lat);
 }
 
-TEST_CASE("a set with a random value is deferred", "[expr][lattices][set]") {
-    // random()/random_gauss() are deferred everywhere so the expanded tree stays
-    // reproducible; a set driven by one leaves its parameter alone.
-    const std::string doc =
-        facility_file("    - Q1:\n"
-                      "        kind: Quadrupole\n"
-                      "        length: 0.5\n"
-                      "        MagneticMultipoleP:\n"
-                      "          Kn1L: 0.375\n"
-                      "    - set:\n"
-                      "        parameter: Q1>MagneticMultipoleP.Kn1L\n"
-                      "        value: PARAMETER * (1 + 1e-4*random_gauss())\n"
-                      "    - main:\n"
-                      "        kind: BeamLine\n"
-                      "        line:\n" +
-                      std::string(BEGIN_ENTRY) + "          - Q1\n",
-                      "main");
+TEST_CASE("a post_expansion set gives each copy its own random error",
+          "[expr][lattices][set]") {
+    // top-level.md (s:facility): after expansion there are three `q1`, and the
+    // set draws for each of them; before expansion it writes the one
+    // definition, so all three would share a draw.
+    auto doc = [](bool post) {
+        const std::string set =
+            "    - set:\n"
+            "        parameter: q1>MagneticMultipoleP.Kn1L\n"
+            "        value: PARAMETER * (1 + 1e-4*random_gauss())\n";
+        return facility_file("    - q1:\n"
+                             "        kind: Quadrupole\n"
+                             "        length: 0.5\n"
+                             "        MagneticMultipoleP:\n"
+                             "          Kn1L: 0.375\n" +
+                                 (post ? "" : set) +
+                                 "    - main:\n"
+                                 "        kind: BeamLine\n"
+                                 "        line:\n" +
+                                 std::string(BEGIN_ENTRY) +
+                                 "          - q1:\n"
+                                 "              repeat: 3\n",
+                             "main", post ? set : "");
+    };
+    auto kn1l = [](const struct lattices& lat) {
+        std::set<double> v;
+        for (size_t i = 0; i < 3; ++i) {
+            double k = nth_param(lat.full_expanded, "q1", i,
+                                 "MagneticMultipoleP", "Kn1L");
+            REQUIRE(std::fabs(k - 0.375) < 0.375 * 1e-4 * 10);
+            v.insert(k);
+        }
+        return v;
+    };
 
-    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
-    REQUIRE(joined(lat) == "");
-    REQUIRE(close(one_param(lat.full_expanded, "Q1", "MagneticMultipoleP", "Kn1L"),
-                  0.375));
+    struct lattices post = expand_PALS_string(doc(true).c_str(), nullptr);
+    REQUIRE(joined(post) == "");
+    std::set<double> drawn = kn1l(post);
+    REQUIRE(drawn.size() == 3);
 
-    free_all(lat);
+    // Not reproducible: expanding again is another sample.
+    struct lattices again = expand_PALS_string(doc(true).c_str(), nullptr);
+    REQUIRE(kn1l(again) != drawn);
+
+    struct lattices pre = expand_PALS_string(doc(false).c_str(), nullptr);
+    REQUIRE(joined(pre) == "");
+    REQUIRE(kn1l(pre).size() == 1);
+
+    free_all(post);
+    free_all(again);
+    free_all(pre);
 }
 
 TEST_CASE("malformed sets are reported", "[expr][lattices][set][problems]") {
@@ -907,4 +934,276 @@ TEST_CASE("malformed sets are reported", "[expr][lattices][set][problems]") {
         REQUIRE(any_contains(problem_messages(lat), c.message));
         free_all(lat);
     }
+}
+
+// ------------------------------------------------------------
+// random_seed (parameter-values-and-controllers.md, s:random.seed)
+// ------------------------------------------------------------
+
+namespace {
+
+// Three `q1` with a random Kn1L error from a post_expansion set, a constant
+// drawn in `facility`, and a girder drawing its offset. `fac_seed` and
+// `post_seed` are `random_seed` lines put at the head of each list ("" for
+// none).
+std::string seeded_doc(const std::string& fac_seed,
+                       const std::string& post_seed) {
+    return facility_file(fac_seed +
+                             "    - constants:\n"
+                             "        - err: random()\n"
+                             "    - q1:\n"
+                             "        kind: Quadrupole\n"
+                             "        length: 0.5 + 0.01*err\n"
+                             "        MagneticMultipoleP:\n"
+                             "          Kn1L: 0.375\n"
+                             "    - main:\n"
+                             "        kind: BeamLine\n"
+                             "        line:\n" +
+                             std::string(BEGIN_ENTRY) +
+                             "          - q1:\n"
+                             "              repeat: 3\n",
+                         "main",
+                         post_seed +
+                             "    - set:\n"
+                             "        parameter: q1>MagneticMultipoleP.Kn1L\n"
+                             "        value: PARAMETER * (1 + "
+                             "1e-4*random_gauss())\n") +
+           "  girders:\n"
+           "    g1:\n"
+           "      kind: Girder\n"
+           "      GirderP:\n"
+           "        elements: q1\n"
+           "      BodyShiftP:\n"
+           "        x_offset: 1e-3*random_gauss()\n";
+}
+
+// Everything drawn in `doc`: the constant, the girder offset, then the three
+// Kn1L.
+std::vector<double> draws(const std::string& doc) {
+    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(joined(lat) == "");
+    std::vector<double> v;
+    v.push_back(one_param(lat.full_expanded, "q1", nullptr, "length"));
+    YAMLNodeId pals = get_child_by_key(lat.adjunct, get_root(lat.adjunct),
+                                       "PALS");
+    YAMLNodeId g = get_child_by_key(
+        lat.adjunct, get_child_by_key(lat.adjunct, pals, "girders"), "g1");
+    v.push_back(num_val(lat.adjunct,
+                        get_child_by_key(lat.adjunct,
+                                         get_child_by_key(lat.adjunct, g,
+                                                          "BodyShiftP"),
+                                         "x_offset")));
+    for (size_t i = 0; i < 3; ++i)
+        v.push_back(nth_param(lat.full_expanded, "q1", i, "MagneticMultipoleP",
+                              "Kn1L"));
+    free_all(lat);
+    return v;
+}
+
+}  // namespace
+
+TEST_CASE("a random_seed makes the draws reproducible",
+          "[expr][lattices][set][random]") {
+    const std::string seed7 = "    - random_seed: 7\n";
+    std::vector<double> a = draws(seeded_doc(seed7, ""));
+    // The same seed, the same draws: the constant, the girder, and the set.
+    REQUIRE(draws(seeded_doc(seed7, "")) == a);
+    // Another seed, other draws.
+    std::vector<double> b = draws(seeded_doc("    - random_seed: 8\n", ""));
+    for (size_t i = 0; i < a.size(); ++i) REQUIRE(a[i] != b[i]);
+    // No seed, or a seed of zero: chosen by the system, so not reproducible.
+    std::vector<double> none = draws(seeded_doc("", ""));
+    REQUIRE(draws(seeded_doc("", "")) != none);
+    std::vector<double> zero = draws(seeded_doc("    - random_seed: 0\n", ""));
+    REQUIRE(draws(seeded_doc("    - random_seed: 0\n", "")) != zero);
+    // One expansion's seed does not carry into the next.
+    REQUIRE(draws(seeded_doc("", "")) != a);
+}
+
+TEST_CASE("a random_seed resets the sequence where it stands",
+          "[expr][lattices][set][random]") {
+    // A seed in post_expansion fixes what is drawn after it, whatever came
+    // before: the facility draws vary, the set's do not.
+    const std::string post = "    - random_seed: 5678\n";
+    std::vector<double> a = draws(seeded_doc("", post));
+    std::vector<double> b = draws(seeded_doc("", post));
+    REQUIRE(a[0] != b[0]);
+    REQUIRE(a[1] != b[1]);
+    REQUIRE(std::vector<double>(a.begin() + 2, a.end()) ==
+            std::vector<double>(b.begin() + 2, b.end()));
+
+    // The same seed twice gives the same draw after each.
+    const std::string doc =
+        facility_file("    - random_seed: 42\n"
+                      "    - constants:\n"
+                      "        - r1: random()\n"
+                      "    - random_seed: 42\n"
+                      "    - constants:\n"
+                      "        - r2: random()\n"
+                      "    - d:\n"
+                      "        kind: Drift\n"
+                      "        length: r1\n"
+                      "    - d2:\n"
+                      "        kind: Drift\n"
+                      "        length: r2\n"
+                      "    - main:\n"
+                      "        kind: BeamLine\n"
+                      "        line:\n" +
+                      std::string(BEGIN_ENTRY) + "          - d\n          - d2\n",
+                      "main");
+    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(joined(lat) == "");
+    double r1 = one_param(lat.full_expanded, "d", nullptr, "length");
+    REQUIRE(r1 > 0.0);
+    REQUIRE(one_param(lat.full_expanded, "d2", nullptr, "length") == r1);
+    // The statement stays in the adjunct, as written.
+    YAMLNodeId rs = facility_param(lat.adjunct, "random_seed");
+    REQUIRE(val_eq(lat.adjunct, rs, "42"));
+    free_all(lat);
+}
+
+TEST_CASE("a post_expansion constant draws after the seed before it",
+          "[expr][lattices][set][random]") {
+    // The post_expansion list is walked in order like facility: its constant
+    // is drawn where it stands, after its seed, and the set reading it sees
+    // that draw.
+    const std::string doc = facility_file(
+        "    - d:\n"
+        "        kind: Drift\n"
+        "        length: 1 + 0.1*random()\n"
+        "    - main:\n"
+        "        kind: BeamLine\n"
+        "        line:\n" +
+            std::string(BEGIN_ENTRY) + "          - d\n",
+        "main",
+        "    - random_seed: 99\n"
+        "    - constants:\n"
+        "        - dl: random()\n"
+        "    - set:\n"
+        "        parameter: d>length\n"
+        "        value: 2 + dl\n");
+    auto run = [&](double& dl) {
+        struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+        REQUIRE(joined(lat) == "");
+        YAMLNodeId pals = get_child_by_key(lat.adjunct, get_root(lat.adjunct),
+                                           "PALS");
+        YAMLNodeId post = get_child_by_key(lat.adjunct, pals, "post_expansion");
+        YAMLNodeId consts =
+            get_child_by_key(lat.adjunct, get_child_by_index(lat.adjunct, post, 1),
+                             "constants");
+        dl = num_val(lat.adjunct, compact_def(lat.adjunct, consts, "dl"));
+        double len = one_param(lat.full_expanded, "d", nullptr, "length");
+        free_all(lat);
+        return len;
+    };
+    double dl1 = 0, dl2 = 0;
+    double len1 = run(dl1);
+    REQUIRE(len1 == 2 + dl1);
+    REQUIRE(run(dl2) == len1);
+    REQUIRE(dl2 == dl1);
+}
+
+TEST_CASE("a random_seed must be an integer",
+          "[expr][lattices][set][random][problems]") {
+    for (const char* bad : {"1.5", "abc", "2*3", "99999999999999999999"}) {
+        const std::string doc =
+            facility_file(std::string("    - random_seed: ") + bad + "\n"
+                          "    - d:\n"
+                          "        kind: Drift\n"
+                          "        length: 1\n"
+                          "    - main:\n"
+                          "        kind: BeamLine\n"
+                          "        line:\n" +
+                              std::string(BEGIN_ENTRY) + "          - d\n",
+                          "main");
+        struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+        REQUIRE(joined(lat) == std::string("facility: random_seed must be an "
+                                           "integer, got '") +
+                                   bad + "'; ");
+        free_all(lat);
+    }
+}
+
+namespace {
+
+// The `PALS: random_seeds` list of the adjunct, as (seed, at, statement)
+// strings; empty when there is none.
+std::vector<std::string> recorded_seeds(const struct lattices& lat,
+                                        std::vector<std::string>* seeds = nullptr) {
+    std::vector<std::string> out;
+    YAMLNodeId pals = get_child_by_key(lat.adjunct, get_root(lat.adjunct),
+                                       "PALS");
+    YAMLNodeId list = get_child_by_key(lat.adjunct, pals, "random_seeds");
+    if (list == YAML_NULL_ID) return out;
+    for (size_t i = 0; i < get_size(lat.adjunct, list); ++i) {
+        YAMLNodeId r = get_child_by_index(lat.adjunct, list, i);
+        auto str = [&](const char* k) -> std::string {
+            YAMLNodeId n = get_child_by_key(lat.adjunct, r, k);
+            if (n == YAML_NULL_ID) return "-";
+            char* v = as_string(lat.adjunct, n);
+            std::string s = v ? v : "";
+            yaml_free_string(v);
+            return s;
+        };
+        if (seeds) seeds->push_back(str("seed"));
+        out.push_back(str("at") + " " + str("statement"));
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("the seeds the system chose are recorded in the adjunct",
+          "[expr][lattices][set][random]") {
+    // No random_seed: the start seed is recorded, and putting it at the head
+    // of `facility` repeats the run.
+    std::vector<std::string> seeds;
+    std::string doc = seeded_doc("", "");
+    struct lattices lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(recorded_seeds(lat, &seeds) == std::vector<std::string>{"start -"});
+    free_all(lat);
+    std::vector<double> first = draws(doc);  // another run, another seed
+    seeds.clear();
+    lat = expand_PALS_string(doc.c_str(), nullptr);
+    recorded_seeds(lat, &seeds);
+    std::vector<double> want;
+    want.push_back(one_param(lat.full_expanded, "q1", nullptr, "length"));
+    free_all(lat);
+    std::vector<double> again =
+        draws(seeded_doc("    - random_seed: " + seeds[0] + "\n", ""));
+    REQUIRE(again[0] == want[0]);
+    REQUIRE(again[0] != first[0]);
+
+    // A zero seed in post_expansion: that one is recorded, by statement, and
+    // the start seed only if anything was drawn under it. Giving the recorded
+    // seed back repeats the post_expansion draws.
+    seeds.clear();
+    doc = seeded_doc("    - random_seed: 3\n",
+                     "    - random_seed: 9\n    - random_seed: 0\n");
+    lat = expand_PALS_string(doc.c_str(), nullptr);
+    REQUIRE(recorded_seeds(lat, &seeds) ==
+            std::vector<std::string>{"post_expansion 1"});
+    std::vector<double> kn;
+    for (size_t i = 0; i < 3; ++i)
+        kn.push_back(nth_param(lat.full_expanded, "q1", i, "MagneticMultipoleP",
+                               "Kn1L"));
+    free_all(lat);
+    std::vector<double> repeat = draws(seeded_doc(
+        "    - random_seed: 3\n",
+        "    - random_seed: 9\n    - random_seed: " + seeds[0] + "\n"));
+    REQUIRE(std::vector<double>(repeat.begin() + 2, repeat.end()) == kn);
+
+    // Nothing drawn, nothing recorded.
+    const std::string plain =
+        facility_file("    - d:\n"
+                      "        kind: Drift\n"
+                      "        length: 1\n"
+                      "    - main:\n"
+                      "        kind: BeamLine\n"
+                      "        line:\n" +
+                          std::string(BEGIN_ENTRY) + "          - d\n",
+                      "main");
+    lat = expand_PALS_string(plain.c_str(), nullptr);
+    REQUIRE(recorded_seeds(lat).empty());
+    free_all(lat);
 }

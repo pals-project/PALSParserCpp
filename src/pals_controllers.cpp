@@ -91,7 +91,7 @@ struct CtrlTarget {
     double sum = 0.0;
     bool has_absolute = false;
     bool has_relative = false;
-    bool deferred = false;  // some driving expression stayed unevaluated
+    bool failed = false;  // some ABSOLUTE expression driving it did not evaluate
     // Position of the last `controls` entry naming this parameter, in
     // evaluation order. Two controllers driving two members of one
     // interdependent family are ordered by it: the later write is the one that
@@ -415,8 +415,6 @@ static void evaluate_in_order(ryml::Tree& t, Controllers& cs,
                 locals[ci][v.name] = r.value;
                 set_scalar_num(t, v.node, r.value);
                 v.done = true;
-            } else if (r.deferred) {
-                v.done = true;  // random(); leave the text untouched
             } else {
                 v.error = r.error;
             }
@@ -448,15 +446,13 @@ static void evaluate_in_order(ryml::Tree& t, Controllers& cs,
             } else if (stale != ryml::NONE) {
                 t.remove(stale);
             }
-            if (!r.ok && !r.deferred) {
+            if (!r.ok) {
                 std::string msg = "controller '" + c.name +
                                   "' control expression could not be "
                                   "evaluated: " + body;
                 if (!r.error.empty()) msg += " -- " + r.error;
                 add_problem(problems, msg);
             }
-            // Deferred (random()) expressions keep their text, as everywhere
-            // else, and so drive nothing: the expanded tree stays reproducible.
 
             if (cc.target_ctrl == SIZE_MAX) continue;
             // Only ABSOLUTE control reaches the variable now. A RELATIVE
@@ -521,7 +517,7 @@ static TargetMap gather_targets(const ryml::Tree& t, size_t lat_node,
                     if (cc.ok)
                         tg.sum += cc.value;
                     else
-                        tg.deferred = true;
+                        tg.failed = true;
                 } else {
                     tg.has_relative = true;
                 }
@@ -574,7 +570,7 @@ static void apply_targets(ryml::Tree& t, const TargetMap& targets,
         }
         // A RELATIVE controller leaves the parameter at the value the element
         // itself gives; only the sum of the ABSOLUTE ones is applied here.
-        if (!tg.has_absolute || tg.deferred) continue;
+        if (!tg.has_absolute || tg.failed) continue;
 
         size_t parent = def;
         for (size_t i = 0; i + 1 < path.size(); ++i)

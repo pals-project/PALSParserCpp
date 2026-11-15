@@ -2,6 +2,9 @@
 // walk of `facility` that resolves each definition's inherits and immediate
 // expressions where it stands. See pals_pipeline.h.
 
+#include <cerrno>
+#include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <set>
@@ -460,6 +463,41 @@ static void resolve_definition_inherits(
     items(def);
 }
 
+// A `random_seed` statement (parameter-values-and-controllers.md,
+// s:random.seed): when `entry` is one, reset the random number sequence to the
+// seed it gives and return true. The seed is an integer; zero asks for one the
+// system chooses. One that is not an integer is reported and leaves the
+// sequence alone. `list` names the list it is in, for the message.
+static bool run_random_seed(const ryml::Tree& t, size_t entry,
+                            const char* list, ProblemList& problems) {
+    size_t c = entry_content(t, entry);
+    if (c == ryml::NONE || !t.has_key(c) ||
+        t.key(c) != ryml::to_csubstr("random_seed"))
+        return false;
+    std::string text = t.has_val(c) ? val_str(t, c) : "";
+    const char* s = text.c_str();
+    char* end = nullptr;
+    errno = 0;
+    std::uint64_t seed = 0;
+    bool ok = !text.empty();
+    if (ok && text[0] == '-') {
+        long long v = std::strtoll(s, &end, 10);
+        seed = static_cast<std::uint64_t>(v);
+    } else if (ok) {
+        seed = std::strtoull(s, &end, 10);
+    }
+    ok = ok && errno == 0 && end && *end == '\0' && end != s;
+    if (!ok) {
+        add_problem(problems,
+                    std::string(list) + ": random_seed must be an integer, "
+                    "got '" + text + "'",
+                    "random_seed");
+        return true;
+    }
+    seed_random(seed);
+    return true;
+}
+
 // Walk the `facility` list in order (s:lattice.expand): each definition has its
 // inherits resolved and its immediate expressions evaluated as it is reached,
 // and each `set` acts on the definitions before it. So an immediate expression
@@ -477,14 +515,23 @@ void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
     immediate.immediate_only = true;
 
     // The girders are defined outside the list, under `PALS: girders`, so every
-    // set in it may reach them; their immediate expressions are evaluated first,
-    // so that a set reading one (`PARAMETER`) reads a number.
+    // set in it may reach them; their immediate expressions are evaluated
+    // before the first set, so that a set reading one (`PARAMETER`) reads a
+    // number. Not before the walk: a `random_seed` heading the list must come
+    // before any draw a girder makes.
     const std::vector<size_t> girders = girder_defs(t);
-    for (size_t g : girders) substitute_values(t, g, ctx, problems, immediate);
+    bool girders_done = false;
+    auto settle_girders = [&]() {
+        if (girders_done) return;
+        girders_done = true;
+        for (size_t g : girders)
+            substitute_values(t, g, ctx, problems, immediate);
+    };
 
     std::map<std::string, size_t> before;  // facility definitions so far
     std::vector<size_t> defined;
     for (size_t entry : entries) {
+        if (run_random_seed(t, entry, "facility", problems)) continue;
         std::vector<SetCommand> cmds = entry_set_commands(t, entry, problems);
         if (cmds.empty()) {
             size_t def = entry_content(t, entry);
@@ -499,6 +546,7 @@ void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
             defined.push_back(entry);
             continue;
         }
+        settle_girders();
         for (const SetCommand& cmd : cmds) {
             execute_set(t, cmd,
                         match_definition_parameters(t, defined, cmd.param,
@@ -510,10 +558,11 @@ void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
             ctx = make_expression_context(t);
         }
     }
+    settle_girders();
 }
 
 // Run the `set` commands of the `post_expansion` list against the expanded
-// lattice. Order still matters -- a later set sees what an earlier one wrote --
+// lattice, resetting the random number sequence at each `random_seed`. Order still matters -- a later set sees what an earlier one wrote --
 // but every set sees the whole lattice, since it has already been built.
 void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
                              const std::vector<size_t>& entries,
@@ -523,8 +572,20 @@ void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
     // The girders stand outside the lattice but are as much a part of the
     // machine, and a set may move one.
     const std::vector<size_t> girders = girder_defs(t);
+    SubstituteMode immediate;
+    immediate.immediate_only = true;
     for (size_t e : entries) {
-        for (const SetCommand& cmd : entry_set_commands(t, e, problems)) {
+        if (run_random_seed(t, e, "post_expansion", problems)) continue;
+        std::vector<SetCommand> cmds = entry_set_commands(t, e, problems);
+        if (cmds.empty()) {
+            // A definition: evaluated here, so a random() in it draws after
+            // the `random_seed` before it. What does not evaluate yet is left
+            // to the evaluation after the list, which reports it.
+            substitute_values(t, e, make_expression_context(t, lat_node),
+                              problems, immediate);
+            continue;
+        }
+        for (const SetCommand& cmd : cmds) {
             execute_set(t, cmd,
                         match_element_parameters(t, lat_node, cmd.param,
                                                  girders),

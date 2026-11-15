@@ -19,9 +19,9 @@
  * their argument is read as raw text and passed to
  * AtomicAndPhysicalConstantsCLib. An unquoted species name is an error.
  *
- * random(), random_gauss() and random_gauss(sig_cut) give a fresh draw each
- * time they are evaluated, from a generator seeded by the system, so they are
- * not reproducible from run to run.
+ * random(), random_gauss() and random_gauss(sig_cut) give the next draw from a
+ * sequence that seed_random() resets; left to itself it starts from a seed the
+ * system chooses, so the draws differ from run to run.
  */
 
 #include "pals_expression.h"
@@ -37,6 +37,14 @@
 
 namespace pals {
 namespace {
+
+// The sequence random()/random_gauss() draw from (s:random.seed). One per
+// thread, so concurrent expansions on different threads do not interleave
+// their draws; seed_random() resets it.
+std::mt19937_64& generator() {
+  thread_local std::mt19937_64 gen{std::random_device{}()};
+  return gen;
+}
 
 // std::numbers::pi is C++20; keep this a plain constant for C++17.
 constexpr double kPi = 3.14159265358979323846;
@@ -334,12 +342,12 @@ class Parser {
     return apply(fn, arg_list());
   }
 
-  // A fresh draw on every call. The generator is seeded from the system's
-  // entropy source, so an expansion with random() in it differs from run to
-  // run -- that is the point: each run is another sample of, say, the
-  // misalignments.
+  // The next draw from the sequence. Unless a `random_seed` set it, the
+  // sequence started from a seed the system chose, so an expansion with
+  // random() in it differs from run to run -- each run is another sample of,
+  // say, the misalignments.
   static double draw(const std::string& fn, const std::vector<double>& a) {
-    thread_local std::mt19937_64 gen{std::random_device{}()};
+    std::mt19937_64& gen = generator();
     if (fn == "random") {
       if (!a.empty())
         throw ParseError{"'random' takes no arguments, got " +
@@ -459,6 +467,14 @@ bool builtin_constant(const std::string& name, double& out) {
   if (name == "degrees") { out = kPi / 180; return true; }
   if (name == "amu") { out = apc::EV_PER_AMU; return true; }  // eV/c^2
   return false;
+}
+
+void seed_random(std::uint64_t seed) {
+  if (seed == 0) {
+    std::random_device rd;
+    seed = (std::uint64_t(rd()) << 32) ^ rd();
+  }
+  generator().seed(seed);
 }
 
 EvalOutcome eval_expression(const std::string& text, const SymbolLookup& lookup,

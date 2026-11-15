@@ -109,7 +109,14 @@ struct EvalContext {
 // shared_ptr, so it stays usable after this returns -- `set` commands need a
 // context per command, since each one runs against a tree the previous ones
 // have written to.
+//
+// Given a tree it may write to, the context writes each constant or variable
+// it evaluates back over the definition as a number, so a definition is drawn
+// once however many contexts reach it: a random() in one gives every reference
+// the same value. The const overload only reads.
 EvalContext make_expression_context(const ryml::Tree& t,
+                                    size_t lat_node = ryml::NONE);
+EvalContext make_expression_context(ryml::Tree& t,
                                     size_t lat_node = ryml::NONE);
 
 // A delayed (`expr(...)`) value substitute_values replaced with a number: the
@@ -134,6 +141,9 @@ struct SubstituteMode {
     bool immediate_only = false;
     // Where to record the delayed values replaced, if anywhere.
     std::vector<DelayedValue>* delayed = nullptr;
+    // A subtree to leave alone: the `post_expansion` list, on the evaluation
+    // before it runs, since its definitions are evaluated in its own order.
+    size_t skip = ryml::NONE;
 };
 
 // True if `node` is a map defining a `kind: Controller` element.
@@ -170,11 +180,13 @@ void check_definitions(const ryml::Tree& t, ProblemList& problems);
 
 // Evaluate all expressions in the (already expanded) tree in place, and apply
 // the controllers to `lat_node`. `delayed`, when given, receives the delayed
-// values replaced; `drivers`, the controllers driving each parameter.
+// values replaced; `drivers`, the controllers driving each parameter. `skip`,
+// when given, is a subtree whose values are left for later.
 void evaluate_expressions(
     ryml::Tree& t, size_t lat_node, Provenance& prov, ProblemList& problems,
     std::vector<DelayedValue>* delayed = nullptr,
-    std::map<size_t, std::vector<size_t>>* drivers = nullptr);
+    std::map<size_t, std::vector<size_t>>* drivers = nullptr,
+    size_t skip = ryml::NONE);
 
 // pals_controllers.cpp: evaluate the controllers, from the top of their
 // hierarchy down, against the global symbols `global`, and apply the ABSOLUTE
@@ -220,8 +232,10 @@ struct SetTarget {
 void run_facility_list(ryml::Tree& t, const std::vector<size_t>& entries,
                        Provenance& prov, ProblemList& problems);
 
-// Run the `set` commands of the `post_expansion` list against the expanded
-// lattice and the girders. `written`, when given, collects one target per
+// Walk the `post_expansion` list in order: each definition's immediate
+// expressions are evaluated as it is reached, each `random_seed` resets the
+// random number sequence, and each `set` runs against the expanded lattice
+// and the girders. `written`, when given, collects one target per
 // parameter written.
 void run_post_expansion_sets(ryml::Tree& t, size_t lat_node,
                              const std::vector<size_t>& entries,

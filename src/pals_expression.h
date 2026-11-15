@@ -15,6 +15,7 @@
  */
 
 #include <functional>
+#include <cstdint>
 #include <string>
 
 namespace pals {
@@ -66,6 +67,17 @@ using SymbolLookup = std::function<bool(const std::string& name, double& out)>;
  */
 using SpeciesLookup =
     std::function<bool(const std::string& name, std::string& out)>;
+
+/**
+ * @brief Reset the sequence random(), random_gauss() and random_gauss(sig_cut)
+ * draw from (parameter-values-and-controllers.md, s:random.seed).
+ * @ingroup expr
+ *
+ * The same nonzero seed gives the same draws from this parser. Zero asks for a
+ * seed chosen by the system, so the draws differ from run to run. The sequence
+ * is per thread.
+ */
+void seed_random(std::uint64_t seed);
 
 /**
  * @brief Evaluates `text` as a PALS mathematical expression.

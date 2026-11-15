@@ -297,9 +297,15 @@ static void build_lattice(ParsedData& work, size_t lat_node,
     // of existing nodes are unchanged -- only scalar text is rewritten -- so
     // provenance stays valid; a parameter a controller creates is new and
     // simply has no provenance, like ReferenceP/FloorP.
+    // The `post_expansion` list is left alone: its definitions are evaluated
+    // as its walk reaches them, after any `random_seed` before them.
+    size_t pals = t.find_child(t.root_id(), ryml::to_csubstr("PALS"));
+    size_t post_node = pals == ryml::NONE
+                           ? ryml::NONE
+                           : t.find_child(pals, ryml::to_csubstr("post_expansion"));
     std::vector<DelayedValue> delayed;
     evaluate_expressions(t, lat_node, work.provenance, problems, &delayed,
-                         &work.drivers);
+                         &work.drivers, post_node);
 
     // The last point at which the lattice holds the author's inputs and nothing
     // else. Record their paths now; everything the finished lattice carries
@@ -362,6 +368,10 @@ static void make_expanded_and_adjunct(ParsedData* comb,
     // element definitions, so expansion copies the values they write into every
     // use of a definition, and its immediate expressions and inherits are
     // settled at their place in the list.
+    // Every expansion starts its random number sequence afresh, from a seed the
+    // system chooses, until a `random_seed` statement says otherwise
+    // (s:random.seed): one expansion's seed does not carry into the next.
+    seed_random(0);
     check_definitions(t, problems);
     run_facility_list(t, pals_list_entries(t, "facility"), work.provenance,
                       problems);

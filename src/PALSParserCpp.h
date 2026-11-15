@@ -365,8 +365,9 @@ YAML_API void free_lattice_problems(struct problem_list problems);
  *
  * This entry point evaluates a standalone string: user-defined constants and
  * variables are NOT in scope (use parse_and_expand_PALS() for whole-lattice
- * evaluation, which resolves them). random() and random_gauss() give a fresh
- * draw on each call.
+ * evaluation, which resolves them). random() and random_gauss() give the next
+ * draw from the calling thread's sequence, which the last expansion's
+ * `random_seed` statement, if any, left in place.
  *
  * @param expr Null-terminated expression string.
  * @param ok   Optional out-param. Set to true on success, false on a parse

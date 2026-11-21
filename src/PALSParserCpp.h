@@ -290,7 +290,10 @@ extern "C" {
  * without the derived values.
  *           - `adjunct`: the rest of the document, keeping its PALS/facility
  * scaffolding: element and beamline definitions, `use` statements, constants,
- * `post_expansion`, `adjustments`, the girders (with the `FloorP` and
+ * the controllers (each `controls` entry keeping its `expression` as written,
+ * with the number it evaluates to beside it as `value`; none when it cannot be
+ * evaluated, or is deferred like `random()`), `post_expansion`, `adjustments`,
+ * the girders (with the `FloorP` and
  * `ShiftedFloorP` computed for them, and, in place of the `GirderP.elements`
  * that asked for it, a `supported` list on each girder of what it holds up
  * directly: the lattice elements first, as `{branch}>>{element}: {index}`

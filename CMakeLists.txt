@@ -19,7 +19,30 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-enable_testing()
+include(CTest)
+include(GNUInstallDirs)
+option(PALS_BUILD_EXAMPLES "Build command-line examples" ON)
+option(PALS_USE_SYSTEM_DEPS "Use installed rapidyaml, PCRE2 and APC libraries" OFF)
+
+if(PALS_USE_SYSTEM_DEPS)
+  find_package(ryml CONFIG REQUIRED)
+  find_path(PALS_PCRE2_INCLUDE_DIR pcre2.h REQUIRED)
+  find_library(PALS_PCRE2_LIBRARY NAMES pcre2-8 REQUIRED)
+  find_path(PALS_APC_INCLUDE_DIR apc/apc.h REQUIRED)
+  find_library(PALS_APC_LIBRARY NAMES apc REQUIRED)
+  add_library(pals_pcre2 UNKNOWN IMPORTED)
+  set_target_properties(pals_pcre2 PROPERTIES
+    IMPORTED_LOCATION "${PALS_PCRE2_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${PALS_PCRE2_INCLUDE_DIR}")
+  add_library(pals_apc UNKNOWN IMPORTED)
+  set_target_properties(pals_apc PROPERTIES
+    IMPORTED_LOCATION "${PALS_APC_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${PALS_APC_INCLUDE_DIR}")
+  set(PALS_DEPENDENCIES ryml::ryml pals_pcre2 pals_apc)
+  if(BUILD_TESTING)
+    find_package(Catch2 3 CONFIG REQUIRED)
+  endif()
+else()
 include(FetchContent)
 
 FetchContent_Declare(
@@ -29,11 +52,13 @@ FetchContent_Declare(
   GIT_SHALLOW FALSE
 )
 
+if(BUILD_TESTING)
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
   GIT_TAG v3.5.2
 )
+endif()
 
 # PCRE2 provides the PCRE2 regex syntax used by the {beamline} and {element}
 # components of lattice parameter name matching (see match_lattice_parameters).
@@ -67,9 +92,13 @@ FetchContent_Declare(
 set(APC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(rapidyaml)
-FetchContent_MakeAvailable(Catch2)
+if(BUILD_TESTING)
+  FetchContent_MakeAvailable(Catch2)
+endif()
 FetchContent_MakeAvailable(pcre2)
 FetchContent_MakeAvailable(apc)
+set(PALS_DEPENDENCIES ryml pcre2-8-static apc)
+endif()
 
 file(COPY ${CMAKE_SOURCE_DIR}/lattice_files/
      DESTINATION ${CMAKE_BINARY_DIR}/lattice_files/)
@@ -89,13 +118,27 @@ add_library(PALSParserCpp SHARED
   src/pals_expression.cpp
   src/pals_floor.cpp
   src/pals_check.cpp)
-target_link_libraries(PALSParserCpp PUBLIC ryml PRIVATE pcre2-8-static apc)
+target_link_libraries(PALSParserCpp PRIVATE ${PALS_DEPENDENCIES})
+# Public C header has no dependency on rapidyaml or the C++ implementation.
+install(TARGETS PALSParserCpp
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PALSParserCpp
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PALSParserCpp
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PALSParserCpp)
+install(FILES src/PALSParserCpp.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT PALSParserCpp)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+  install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/PALSParserCpp COMPONENT PALSParserCpp)
+endif()
+
+if(PALS_BUILD_EXAMPLES)
 
 add_executable(example_rw examples/example_rw.cpp)
-target_link_libraries(example_rw PALSParserCpp ryml)
+target_link_libraries(example_rw PALSParserCpp ${PALS_DEPENDENCIES})
 
 add_executable(print_lattices examples/print_lattices.cpp)
-target_link_libraries(print_lattices PALSParserCpp ryml)
+target_link_libraries(print_lattices PALSParserCpp ${PALS_DEPENDENCIES})
+endif()
 
 # Must come after PALSParserCpp is defined: tests/CMakeLists.txt links it.
-add_subdirectory(tests)
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()

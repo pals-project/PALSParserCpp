@@ -49,8 +49,9 @@ static std::string short_location(const ryml::Tree& t, size_t node) {
 // `expr(...)`-delayed alike, per the standard's evaluation model as applied to
 // the expanded tree). Values that are not expressions -- element/line name
 // references, `kind:` names, booleans, etc. -- fail to evaluate and are left
-// untouched. Expressions containing random()/random_gauss() are deferred
-// (kept as text) so the expanded tree stays reproducible.
+// untouched. random()/random_gauss() take the next draw each time they are
+// evaluated, so an expansion that uses them differs from run to run unless a
+// `random_seed` statement fixes the sequence (s:random.seed).
 //
 // The math, functions, built-in constants, and particle-data functions
 // (mass_of/charge_of/anomalous_moment_of, from AtomicAndPhysicalConstantsCLib)
@@ -75,7 +76,7 @@ static std::string short_location(const ryml::Tree& t, size_t node) {
 // format_double. That is lossless as a number but not as text -- an id of 110
 // comes back as `1.1e+02`, the shortest round-tripping form -- and every reader
 // of the pointer parses it with std::stoull, which stops at the `.` and yields
-// 1. See handle_fork.
+// 1. See handle_fork. `random_seed` is an integer read the same way.
 static const std::set<std::string>& non_expr_keys() {
     static const std::set<std::string> keys = {
         "kind",       "include",     "use",
@@ -85,7 +86,7 @@ static const std::set<std::string>& non_expr_keys() {
         "element_index", "destination_pointer", "forked_to",
         "authors",    "notes",       "reminders",
         "parameter",  "elements",    "origin_ele",
-        "origin_ele_ref_pt"};
+        "origin_ele_ref_pt", "random_seed"};
     return keys;
 }
 
@@ -192,11 +193,13 @@ static bool is_set_node(const ryml::Tree& t, size_t node) {
 // (`constants:`/`variables:` lists) forms. First definition of a name wins;
 // the standard requires duplicates to share the same value, which
 // check_definitions verifies. `all`, when given, receives every definition,
-// duplicates included. Controller subtrees are skipped: their variables are
-// controller-scoped, not global symbols.
+// duplicates included; `nodes`, the value node of each definition `defs` keeps.
+// Controller subtrees are skipped: their variables are controller-scoped, not
+// global symbols.
 static void collect_defs(
     const ryml::Tree& t, size_t node, std::map<std::string, std::string>& defs,
-    std::vector<std::pair<std::string, std::string>>* all = nullptr) {
+    std::vector<std::pair<std::string, std::string>>* all = nullptr,
+    std::map<std::string, size_t>* nodes = nullptr) {
     if (node == ryml::NONE || is_controller(t, node)) return;
 
     // Full form: a named map with `kind: constant|variable` and a `value:`.
@@ -209,7 +212,8 @@ static void collect_defs(
                 if (val != ryml::NONE && t.has_val(val)) {
                     std::string name = key_str(t, node);
                     std::string text = val_str(t, val);
-                    defs.emplace(name, text);
+                    if (defs.emplace(name, text).second && nodes)
+                        (*nodes)[name] = val;
                     if (all) all->emplace_back(name, text);
                 }
             }
@@ -225,14 +229,15 @@ static void collect_defs(
             if (!t.has_key(kv) || !t.has_val(kv)) return;
             std::string name = key_str(t, kv);
             std::string text = val_str(t, kv);
-            defs.emplace(name, text);
+            if (defs.emplace(name, text).second && nodes)
+                (*nodes)[name] = kv;
             if (all) all->emplace_back(name, text);
         });
     }
 
     for (size_t c = t.first_child(node); c != ryml::NONE;
          c = t.next_sibling(c))
-        collect_defs(t, c, defs, all);
+        collect_defs(t, c, defs, all, nodes);
 }
 
 // True if a scalar was *meant* to be an expression — it carries an arithmetic
@@ -282,14 +287,14 @@ static void substitute_scalar(ryml::Tree& t, size_t node, const EvalContext& ctx
     } else if (mode.immediate_only) {
         // Not evaluable yet -- it may need what expansion computes. The pass
         // after expansion evaluates it, or reports it.
-    } else if (!r.deferred && ctx.species && ctx.species(body, sp)) {
+    } else if (ctx.species && ctx.species(body, sp)) {
         // A bare identifier that names a species-valued constant or variable
         // (e.g. `species_ref: species` with `species: "#3He"`) is replaced by
         // its species-name string. Double-quoted so a leading `#` survives
         // YAML's comment rule on re-emit.
         t.set_val(node, t.to_arena(ryml::to_csubstr(sp)));
         t.set_val_style(node, ryml::VAL_DQUO);
-    } else if (!r.deferred && looks_like_expression(body, was_expr)) {
+    } else if (looks_like_expression(body, was_expr)) {
         std::string loc = short_location(t, node);
         std::string msg = "could not evaluate expression";
         if (!loc.empty()) msg += " for " + loc;
@@ -301,7 +306,8 @@ static void substitute_scalar(ryml::Tree& t, size_t node, const EvalContext& ctx
 
 void substitute_values(ryml::Tree& t, size_t node, const EvalContext& ctx,
                        ProblemList& problems, const SubstituteMode& mode) {
-    if (node == ryml::NONE || is_controller(t, node) || is_set_node(t, node))
+    if (node == ryml::NONE || node == mode.skip || is_controller(t, node) ||
+        is_set_node(t, node))
         return;
     if (t.has_val(node) && !holds_non_expression(t, node))
         substitute_scalar(t, node, ctx, problems, mode);
@@ -361,9 +367,16 @@ static size_t resolve_ele_param_ref(const ryml::Tree& t,
 // read are held by shared_ptr, so the returned functions stay usable after this
 // returns -- `set` commands need a context per command, since each one runs
 // against a tree the previous ones have written to.
-EvalContext make_expression_context(const ryml::Tree& t, size_t lat_node) {
+//
+// `writable`, when given, is `t` itself, and a constant or variable evaluated
+// to a number is written back over its definition: a definition is evaluated
+// once, so one drawing a random number (s:random.seed) gives every reference
+// the same draw, whichever context reaches it first.
+static EvalContext expression_context(const ryml::Tree& t, size_t lat_node,
+                                      ryml::Tree* writable) {
     auto defs = std::make_shared<std::map<std::string, std::string>>();
-    collect_defs(t, t.root_id(), *defs);
+    auto def_nodes = std::make_shared<std::map<std::string, size_t>>();
+    collect_defs(t, t.root_id(), *defs, nullptr, def_nodes.get());
 
     // Element name -> definition map, so expressions may reference another
     // element's parameter via `element>group. ... .param`. Once the lattice is
@@ -401,7 +414,8 @@ EvalContext make_expression_context(const ryml::Tree& t, size_t lat_node) {
     std::weak_ptr<SymbolLookup> self = resolve;
     const ryml::Tree* tp = &t;
     SpeciesLookup species = ctx.species;
-    *resolve = [defs, tp, emap, cache, active, self, species](
+    *resolve = [defs, def_nodes, writable, tp, emap, cache, active, self,
+                species](
                    const std::string& name, double& out) -> bool {
         auto ci = cache->find(name);
         if (ci != cache->end()) {
@@ -416,9 +430,13 @@ EvalContext make_expression_context(const ryml::Tree& t, size_t lat_node) {
             if (vn == ryml::NONE) return false;
             body = val_str(*tp, vn);
         } else {
-            auto di = defs->find(name);
-            if (di == defs->end()) return false;
-            body = di->second;
+            // The definition as it stands now, not as it stood when the
+            // context was made: a definition already evaluated -- here or by
+            // the pass over its own entry -- holds its number, and a random()
+            // in it must not be drawn again.
+            auto ni = def_nodes->find(name);
+            if (ni == def_nodes->end()) return false;
+            body = val_str(*tp, ni->second);
         }
         if (!active->insert(name).second) return false;  // cycle
         bool was_expr = false;
@@ -427,6 +445,13 @@ EvalContext make_expression_context(const ryml::Tree& t, size_t lat_node) {
         EvalOutcome r = eval_expression(body, *me, species);
         active->erase(name);
         if (!r.ok) return false;
+        if (writable && !was_expr) {
+            auto ni = def_nodes->find(name);
+            if (ni != def_nodes->end())
+                writable->set_val(
+                    ni->second,
+                    writable->to_arena(ryml::to_csubstr(format_double(r.value))));
+        }
         (*cache)[name] = r.value;
         out = r.value;
         return true;
@@ -435,6 +460,14 @@ EvalContext make_expression_context(const ryml::Tree& t, size_t lat_node) {
         return (*resolve)(name, out);
     };
     return ctx;
+}
+
+EvalContext make_expression_context(const ryml::Tree& t, size_t lat_node) {
+    return expression_context(t, lat_node, nullptr);
+}
+
+EvalContext make_expression_context(ryml::Tree& t, size_t lat_node) {
+    return expression_context(t, lat_node, &t);
 }
 
 // Where a definition may stand and what it may be defined with
@@ -598,11 +631,13 @@ void check_definitions(const ryml::Tree& t, ProblemList& problems) {
 void evaluate_expressions(ryml::Tree& t, size_t lat_node, Provenance& prov,
                           ProblemList& problems,
                           std::vector<DelayedValue>* delayed,
-                          std::map<size_t, std::vector<size_t>>* drivers) {
+                          std::map<size_t, std::vector<size_t>>* drivers,
+                          size_t skip) {
     EvalContext ctx = make_expression_context(t, lat_node);
     evaluate_controllers(t, lat_node, ctx, prov, problems, drivers);
     SubstituteMode mode;
     mode.delayed = delayed;
+    mode.skip = skip;
     substitute_values(t, t.root_id(), ctx, problems, mode);
 }
 

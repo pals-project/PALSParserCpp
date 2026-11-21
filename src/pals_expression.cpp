@@ -18,6 +18,10 @@
  * quoted species name (e.g. `mass_of("#3He")`), not a numeric sub-expression, so
  * their argument is read as raw text and passed to
  * AtomicAndPhysicalConstantsCLib. An unquoted species name is an error.
+ *
+ * random(), random_gauss() and random_gauss(sig_cut) give the next draw from a
+ * sequence that seed_random() resets; left to itself it starts from a seed the
+ * system chooses, so the draws differ from run to run.
  */
 
 #include "pals_expression.h"
@@ -25,6 +29,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <random>
 #include <stdexcept>
 #include <vector>
 
@@ -32,6 +37,19 @@
 
 namespace pals {
 namespace {
+
+// The sequence random()/random_gauss() draw from (s:random.seed). One per
+// thread, so concurrent expansions on different threads do not interleave
+// their draws; seed_random() resets it.
+std::mt19937_64& generator() {
+  thread_local std::mt19937_64 gen{std::random_device{}()};
+  return gen;
+}
+
+std::vector<SeedRecord>& mutable_seed_log() {
+  thread_local std::vector<SeedRecord> log;
+  return log;
+}
 
 // std::numbers::pi is C++20; keep this a plain constant for C++17.
 constexpr double kPi = 3.14159265358979323846;
@@ -64,14 +82,11 @@ class Parser {
     return v;
   }
 
-  bool deferred() const { return deferred_; }
-
  private:
   const std::string& s_;
   const SymbolLookup& lookup_;
   const SpeciesLookup& species_;
   size_t pos_ = 0;
-  bool deferred_ = false;
 
   void skip_ws() {
     while (pos_ < s_.size() &&
@@ -328,14 +343,39 @@ class Parser {
         throw ParseError{"unknown species '" + sp + "'"};
       }
     }
-    // random()/random_gauss() cannot be evaluated reproducibly: mark deferred
-    // but still consume the argument list so parsing completes.
-    if (fn == "random" || fn == "random_gauss") {
-      arg_list();
-      deferred_ = true;
-      return 0.0;  // unused when deferred
-    }
+    if (fn == "random" || fn == "random_gauss") return draw(fn, arg_list());
     return apply(fn, arg_list());
+  }
+
+  // The next draw from the sequence. Unless a `random_seed` set it, the
+  // sequence started from a seed the system chose, so an expansion with
+  // random() in it differs from run to run -- each run is another sample of,
+  // say, the misalignments.
+  static double draw(const std::string& fn, const std::vector<double>& a) {
+    std::mt19937_64& gen = generator();
+    std::vector<SeedRecord>& log = mutable_seed_log();
+    if (!log.empty()) ++log.back().draws;
+    if (fn == "random") {
+      if (!a.empty())
+        throw ParseError{"'random' takes no arguments, got " +
+                         std::to_string(a.size())};
+      return std::uniform_real_distribution<double>(0.0, 1.0)(gen);
+    }
+    if (a.size() > 1)
+      throw ParseError{"'random_gauss' takes at most one argument, got " +
+                       std::to_string(a.size())};
+    std::normal_distribution<double> gauss(0.0, 1.0);
+    if (a.empty()) return gauss(gen);
+    // random_gauss(sig_cut): the tail beyond sig_cut sigma is cut off, so draw
+    // again until the value falls inside it.
+    double cut = a[0];
+    if (!(cut > 0))
+      throw ParseError{"'random_gauss' cutoff must be positive, got " +
+                       std::to_string(cut)};
+    for (;;) {
+      double x = gauss(gen);
+      if (std::fabs(x) <= cut) return x;
+    }
   }
 
   static double apply(const std::string& fn, const std::vector<double>& a) {
@@ -436,16 +476,29 @@ bool builtin_constant(const std::string& name, double& out) {
   return false;
 }
 
+std::uint64_t seed_random(std::uint64_t seed, const std::string& list,
+                          size_t statement) {
+  bool chosen = seed == 0;
+  // Never zero, so the seed recorded is one a `random_seed` can give back.
+  while (seed == 0) {
+    std::random_device rd;
+    seed = (std::uint64_t(rd()) << 32) ^ rd();
+  }
+  generator().seed(seed);
+  mutable_seed_log().push_back({list, statement, seed, chosen, 0});
+  return seed;
+}
+
+void clear_seed_log() { mutable_seed_log().clear(); }
+
+const std::vector<SeedRecord>& seed_log() { return mutable_seed_log(); }
+
 EvalOutcome eval_expression(const std::string& text, const SymbolLookup& lookup,
                             const SpeciesLookup& species) {
   EvalOutcome r;
   try {
     Parser p(text, lookup, species);
     double v = p.parse();
-    if (p.deferred()) {
-      r.deferred = true;
-      return r;
-    }
     if (!std::isfinite(v)) {  // ok stays false
       r.error = "the result is not a finite number";
       return r;

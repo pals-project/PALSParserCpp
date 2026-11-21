@@ -292,14 +292,20 @@ extern "C" {
  * scaffolding: element and beamline definitions, `use` statements, constants,
  * the controllers (each `controls` entry keeping its `expression` as written,
  * with the number it evaluates to beside it as `value`; none when it cannot be
- * evaluated, or is deferred like `random()`), `post_expansion`, `adjustments`,
+ * evaluated), `post_expansion`, `adjustments`,
  * the girders (with the `FloorP` and
  * `ShiftedFloorP` computed for them, and, in place of the `GirderP.elements`
  * that asked for it, a `supported` list on each girder of what it holds up
  * directly: the lattice elements first, as `{branch}>>{element}: {index}`
  * entries in lattice order, then the girders by name), and any Lattice that was
  * not the one expanded. Definitions substituted into the lattice are copies, so
- * they appear in both trees.
+ * they appear in both trees. When a random number was drawn under a seed the
+ * system chose -- there was no `random_seed`, or one of zero -- the adjunct's
+ * `PALS` node also gets a `random_seeds` list recording each such seed, so the
+ * run can be repeated: `{seed: N, at: start}` is the seed the expansion began
+ * with (`random_seed: N` at the head of `facility` repeats it), and
+ * `{seed: N, at: facility|post_expansion, statement: i}` the one the i-th
+ * (from 0) `random_seed` statement of that list chose.
  *         All five handles must be freed individually with delete_tree().
  *
  *         The returned struct also carries `problems`: an owning list of every
@@ -365,12 +371,13 @@ YAML_API void free_lattice_problems(struct problem_list problems);
  *
  * This entry point evaluates a standalone string: user-defined constants and
  * variables are NOT in scope (use parse_and_expand_PALS() for whole-lattice
- * evaluation, which resolves them). Expressions containing random() /
- * random_gauss() are treated as non-evaluable here.
+ * evaluation, which resolves them). random() and random_gauss() give the next
+ * draw from the calling thread's sequence, which the last expansion's
+ * `random_seed` statement, if any, left in place.
  *
  * @param expr Null-terminated expression string.
  * @param ok   Optional out-param. Set to true on success, false on a parse
- *             error, unknown identifier/species, deferred random(), or a
+ *             error, unknown identifier/species, or a
  *             non-finite result. May be NULL.
  * @return The evaluated value on success, or 0.0 on failure.
  */

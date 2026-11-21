@@ -122,13 +122,37 @@ TEST_CASE("evaluate_pals_expression: expr() wrapper is accepted", "[expr]") {
     REQUIRE(eval_ok("expr( (1 + 2) * 3 )") == 9.0);
 }
 
+TEST_CASE("evaluate_pals_expression: the random functions draw afresh",
+          "[expr]") {
+    // parameter-values-and-controllers.md: random() is uniform on [0, 1),
+    // random_gauss() has zero mean and unit sigma, and random_gauss(sig_cut)
+    // cuts the tail off beyond sig_cut.
+    std::set<double> seen;
+    for (int i = 0; i < 200; ++i) {
+        double u = eval_ok("random()");
+        REQUIRE(u >= 0.0);
+        REQUIRE(u < 1.0);
+        double g = eval_ok("random_gauss(0.5)");
+        REQUIRE(std::fabs(g) <= 0.5);
+        seen.insert(eval_ok("0.01 + 0.003 * random_gauss()"));
+    }
+    // Each evaluation is a new draw.
+    REQUIRE(seen.size() > 100);
+
+    bool ok = true;
+    evaluate_pals_expression("random(1)", &ok);
+    REQUIRE_FALSE(ok);
+    ok = true;
+    evaluate_pals_expression("random_gauss(1, 2)", &ok);
+    REQUIRE_FALSE(ok);
+    ok = true;
+    evaluate_pals_expression("random_gauss(0)", &ok);  // no tail left to draw
+    REQUIRE_FALSE(ok);
+}
+
 TEST_CASE("evaluate_pals_expression: non-evaluable inputs report failure",
           "[expr]") {
     bool ok = true;
-    // random()/random_gauss() are deferred, so not evaluable here.
-    evaluate_pals_expression("0.01 + 0.003 * random_gauss()", &ok);
-    REQUIRE_FALSE(ok);
-    ok = true;
     evaluate_pals_expression("thingB", &ok);          // unknown identifier
     REQUIRE_FALSE(ok);
     ok = true;
@@ -188,9 +212,9 @@ TEST_CASE("parse_and_expand_PALS evaluates expressions in the expanded tree",
     YAMLNodeId kn1 = get_child_by_key(lat.full_expanded, mmp, "Kn1");
     REQUIRE(close(num_val(lat.full_expanded, kn1), 3.74 * a_var));
 
-    // random_gauss() is deferred: the text is left untouched.
+    // random_gauss() is evaluated like any other function: a number, drawn.
     YAMLNodeId kn2 = get_child_by_key(lat.full_expanded, mmp, "Kn2");
-    REQUIRE(val_eq(lat.full_expanded, kn2, "0.01 + 0.003*random_gauss()"));
+    REQUIRE(std::fabs(num_val(lat.full_expanded, kn2) - 0.01) < 0.003 * 10);
 
     // Expressions are evaluated before the document is split, so a definition
     // that stayed behind is evaluated in adjunct just the same. `m_e` is not

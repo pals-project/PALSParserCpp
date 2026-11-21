@@ -18,6 +18,38 @@ automatically. Rebuild after changing any source file, and before running the
 tests. Lattices for the examples go under `lattice_files/`; the test fixtures are
 separate, under `tests/lattices/`.
 
+### Packaging and installed dependencies
+
+CMake 3.18 or later and a C++17 compiler are required. The defaults build tests
+and examples and fetch the dependencies. Packagers can instead use:
+
+```console
+cmake -S . -B build-package -DPALS_USE_SYSTEM_DEPS=ON -DBUILD_TESTING=OFF -DPALS_BUILD_EXAMPLES=OFF -DCMAKE_PREFIX_PATH=/path/to/dependencies -DCMAKE_INSTALL_PREFIX=/path/to/prefix
+cmake --build build-package
+cmake --install build-package --component PALSParserCpp
+```
+
+`PALS_USE_SYSTEM_DEPS=ON` disables dependency downloads. It requires rapidyaml's
+`ryml` CMake package, PCRE2 (8-bit), and APC. When `BUILD_TESTING=ON`, it also
+requires Catch2 3's CMake package. `BUILD_TESTING` and `PALS_BUILD_EXAMPLES`
+independently control tests and examples; both default to `ON`.
+
+Use `CMAKE_PREFIX_PATH` to locate installed dependencies, or set
+`PALS_PCRE2_INCLUDE_DIR`, `PALS_PCRE2_LIBRARY`, `PALS_APC_INCLUDE_DIR`, and
+`PALS_APC_LIBRARY` explicitly. `PALS_APC_LIBRARY` may select a static archive
+built with position-independent code to bundle APC. For static PCRE2, set
+`PALS_PCRE2_STATIC=ON` and point `PALS_PCRE2_LIBRARY` at the static library;
+this supplies the `PCRE2_STATIC` definition required on Windows. The option
+defaults to `OFF` for shared PCRE2.
+
+The `PALSParserCpp` install component installs only the library, its public C
+header, and an upstream license file if present. It excludes dependencies,
+tests and examples. Shared dependencies must be deployed separately. On macOS
+and Linux, installed libraries search their own directory for dependencies
+(`@loader_path` and `$ORIGIN`, respectively). Dependencies in other directories
+require an appropriate runtime search path supplied by the application or
+packaging tool. On Windows, place dependency DLLs on the DLL search path.
+
 ## Expanding a lattice
 
 `parse_and_expand_PALS` reads a lattice file, resolves its includes and loads,

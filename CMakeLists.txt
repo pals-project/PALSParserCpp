@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 project(PALSParserCpp)
 
 # Default to Release when no build type is given. This is not just about
@@ -22,7 +22,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(CTest)
 include(GNUInstallDirs)
 option(PALS_BUILD_EXAMPLES "Build command-line examples" ON)
-option(PALS_USE_SYSTEM_DEPS "Use installed rapidyaml, PCRE2 and APC libraries" OFF)
+option(PALS_USE_SYSTEM_DEPS "Use installed rapidyaml, PCRE2, APC and (when testing) Catch2 libraries" OFF)
+
+option(PALS_PCRE2_STATIC "Installed PCRE2 library is static (system dependencies only)" OFF)
 
 if(PALS_USE_SYSTEM_DEPS)
   find_package(ryml CONFIG REQUIRED)
@@ -34,6 +36,9 @@ if(PALS_USE_SYSTEM_DEPS)
   set_target_properties(pals_pcre2 PROPERTIES
     IMPORTED_LOCATION "${PALS_PCRE2_LIBRARY}"
     INTERFACE_INCLUDE_DIRECTORIES "${PALS_PCRE2_INCLUDE_DIR}")
+  if(PALS_PCRE2_STATIC)
+    set_property(TARGET pals_pcre2 PROPERTY INTERFACE_COMPILE_DEFINITIONS PCRE2_STATIC)
+  endif()
   add_library(pals_apc UNKNOWN IMPORTED)
   set_target_properties(pals_apc PROPERTIES
     IMPORTED_LOCATION "${PALS_APC_LIBRARY}"
@@ -43,61 +48,61 @@ if(PALS_USE_SYSTEM_DEPS)
     find_package(Catch2 3 CONFIG REQUIRED)
   endif()
 else()
-include(FetchContent)
+  include(FetchContent)
 
-FetchContent_Declare(
-  rapidyaml
-  GIT_REPOSITORY https://github.com/biojppm/rapidyaml.git
-  GIT_TAG v0.11.1
-  GIT_SHALLOW FALSE
-)
+  FetchContent_Declare(
+    rapidyaml
+    GIT_REPOSITORY https://github.com/biojppm/rapidyaml.git
+    GIT_TAG v0.11.1
+    GIT_SHALLOW FALSE
+  )
 
-if(BUILD_TESTING)
-FetchContent_Declare(
-  Catch2
-  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG v3.5.2
-)
-endif()
+  if(BUILD_TESTING)
+    FetchContent_Declare(
+      Catch2
+      GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+      GIT_TAG v3.5.2
+    )
+  endif()
 
-# PCRE2 provides the PCRE2 regex syntax used by the {beamline} and {element}
-# components of lattice parameter name matching (see match_lattice_parameters).
-FetchContent_Declare(
-  pcre2
-  GIT_REPOSITORY https://github.com/PCRE2Project/pcre2.git
-  GIT_TAG pcre2-10.44
-)
-# Build only the 8-bit library, statically, and skip the tooling/tests so the
-# regex code is embedded directly into libPALSParserCpp.
-set(PCRE2_BUILD_PCRE2_8 ON CACHE BOOL "" FORCE)
-set(PCRE2_BUILD_PCRE2_16 OFF CACHE BOOL "" FORCE)
-set(PCRE2_BUILD_PCRE2_32 OFF CACHE BOOL "" FORCE)
-set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
-set(PCRE2_SUPPORT_JIT OFF CACHE BOOL "" FORCE)
-set(PCRE2_STATIC_PIC ON CACHE BOOL "" FORCE)
+  # PCRE2 provides the PCRE2 regex syntax used by the {beamline} and {element}
+  # components of lattice parameter name matching (see match_lattice_parameters).
+  FetchContent_Declare(
+    pcre2
+    GIT_REPOSITORY https://github.com/PCRE2Project/pcre2.git
+    GIT_TAG pcre2-10.44
+  )
+  # Build only the 8-bit library, statically, and skip the tooling/tests so the
+  # regex code is embedded directly into libPALSParserCpp.
+  set(PCRE2_BUILD_PCRE2_8 ON CACHE BOOL "" FORCE)
+  set(PCRE2_BUILD_PCRE2_16 OFF CACHE BOOL "" FORCE)
+  set(PCRE2_BUILD_PCRE2_32 OFF CACHE BOOL "" FORCE)
+  set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
+  set(PCRE2_SUPPORT_JIT OFF CACHE BOOL "" FORCE)
+  set(PCRE2_STATIC_PIC ON CACHE BOOL "" FORCE)
 
-# AtomicAndPhysicalConstantsCLib (apc) provides the particle-data functions
-# (mass_of / charge_of / anomalous_moment_of) and the named physical constants
-# used by the PALS expression evaluator. Its values mirror
-# AtomicAndPhysicalConstants.jl so the whole ecosystem shares one set of numbers.
-# Pinned to a tag, not main: the reference values in the tests are tied to a
-# specific APC release, so an upstream push must not silently change them here.
-# apc's version tracks the APC release it mirrors (v0.11.1 = APC v0.11.1).
-FetchContent_Declare(
-  apc
-  GIT_REPOSITORY https://github.com/pals-project/AtomicAndPhysicalConstantsCLib.git
-  GIT_TAG v0.11.1
-)
-set(APC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  # AtomicAndPhysicalConstantsCLib (apc) provides the particle-data functions
+  # (mass_of / charge_of / anomalous_moment_of) and the named physical constants
+  # used by the PALS expression evaluator. Its values mirror
+  # AtomicAndPhysicalConstants.jl so the whole ecosystem shares one set of numbers.
+  # Pinned to a tag, not main: the reference values in the tests are tied to a
+  # specific APC release, so an upstream push must not silently change them here.
+  # apc's version tracks the APC release it mirrors (v0.11.1 = APC v0.11.1).
+  FetchContent_Declare(
+    apc
+    GIT_REPOSITORY https://github.com/pals-project/AtomicAndPhysicalConstantsCLib.git
+    GIT_TAG v0.11.1
+  )
+  set(APC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(rapidyaml)
-if(BUILD_TESTING)
-  FetchContent_MakeAvailable(Catch2)
-endif()
-FetchContent_MakeAvailable(pcre2)
-FetchContent_MakeAvailable(apc)
-set(PALS_DEPENDENCIES ryml pcre2-8-static apc)
+  FetchContent_MakeAvailable(rapidyaml)
+  if(BUILD_TESTING)
+    FetchContent_MakeAvailable(Catch2)
+  endif()
+  FetchContent_MakeAvailable(pcre2)
+  FetchContent_MakeAvailable(apc)
+  set(PALS_DEPENDENCIES ryml pcre2-8-static apc)
 endif()
 
 file(COPY ${CMAKE_SOURCE_DIR}/lattice_files/
@@ -119,6 +124,13 @@ add_library(PALSParserCpp SHARED
   src/pals_floor.cpp
   src/pals_check.cpp)
 target_link_libraries(PALSParserCpp PRIVATE ${PALS_DEPENDENCIES})
+# Dependencies installed alongside this library are discoverable after installation.
+# Packaging tools may rewrite this for their own artifact layout.
+if(APPLE)
+  set_target_properties(PALSParserCpp PROPERTIES INSTALL_RPATH "@loader_path")
+elseif(UNIX)
+  set_target_properties(PALSParserCpp PROPERTIES INSTALL_RPATH "$ORIGIN")
+endif()
 # Public C header has no dependency on rapidyaml or the C++ implementation.
 install(TARGETS PALSParserCpp
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PALSParserCpp
@@ -130,12 +142,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 endif()
 
 if(PALS_BUILD_EXAMPLES)
+  add_executable(example_rw examples/example_rw.cpp)
+  target_link_libraries(example_rw PALSParserCpp ${PALS_DEPENDENCIES})
 
-add_executable(example_rw examples/example_rw.cpp)
-target_link_libraries(example_rw PALSParserCpp ${PALS_DEPENDENCIES})
-
-add_executable(print_lattices examples/print_lattices.cpp)
-target_link_libraries(print_lattices PALSParserCpp ${PALS_DEPENDENCIES})
+  add_executable(print_lattices examples/print_lattices.cpp)
+  target_link_libraries(print_lattices PALSParserCpp ${PALS_DEPENDENCIES})
 endif()
 
 # Must come after PALSParserCpp is defined: tests/CMakeLists.txt links it.

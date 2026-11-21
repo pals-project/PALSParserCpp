@@ -25,7 +25,7 @@ include(FetchContent)
 FetchContent_Declare(
   rapidyaml
   GIT_REPOSITORY https://github.com/biojppm/rapidyaml.git
-  GIT_TAG v0.11.1
+  GIT_TAG v0.15.0
   GIT_SHALLOW FALSE
 )
 

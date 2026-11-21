@@ -101,3 +101,8 @@ Notes for working on the library itself (source layout, memory model, running
 the tests, measuring test coverage, building the docs) are on the
 [Working on PALSParserCpp](https://pals-project.github.io/PALSParserCpp/develop.html)
 page.
+
+## License
+
+PALSParserCpp is licensed under the GNU General Public License, version 2
+only (`GPL-2.0-only`). See [LICENSE](LICENSE).

@@ -45,6 +45,9 @@
  *
  * @defgroup lifecycle Memory management
  * @brief Release the handles and strings the API returns.
+ *
+ * @defgroup version Library version
+ * @brief Report which release of the library is loaded.
  */
 
 // --- CORE TYPES ---
@@ -245,6 +248,19 @@ struct node_list {
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * The version of this library, as "major.minor.patch".
+ * @ingroup version
+ *
+ * It is the VERSION of the CMake project, and a release is tagged
+ * v<version>. A binding that mirrors the structs in this header by their
+ * layout (palsparserpy does, through ctypes) calls it first, to refuse a
+ * library whose structs may not match its own.
+ *
+ * @return A static null-terminated string. Do not free it.
+ */
+YAML_API const char* pals_parser_cpp_version(void);
 
 /**
  * Builds and returns all five representations of a lattice file.

@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.18)
-project(PALSParserCpp)
+# The version pals_parser_cpp_version() reports. A release is tagged
+# v<version> on a commit where this says <version>.
+project(PALSParserCpp VERSION 0.0.3)
 
 # Default to Release when no build type is given. This is not just about
 # optimization: an empty build type leaves NDEBUG undefined, and c4core (vendored
@@ -133,6 +135,10 @@ add_library(PALSParserCpp SHARED
   src/pals_floor.cpp
   src/pals_check.cpp)
 target_link_libraries(PALSParserCpp PRIVATE ${PALS_DEPENDENCIES})
+# PALSParserCpp_VERSION rather than PROJECT_VERSION, which the fetched
+# dependencies' own project() calls also set.
+target_compile_definitions(PALSParserCpp PRIVATE
+  PALS_PARSER_CPP_VERSION_STRING="${PALSParserCpp_VERSION}")
 # Dependencies installed alongside this library are discoverable after installation.
 # Packaging tools may rewrite this for their own artifact layout.
 if(APPLE)

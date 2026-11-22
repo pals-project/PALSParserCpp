@@ -124,6 +124,17 @@ Release the handles and strings the API returns. (The subsystem-specific
 :members:
 ```
 
+## Library version
+
+Report which release of the library is loaded, so a binding can refuse one it
+was not written against.
+
+```{doxygengroup} version
+:project: PALSParserCpp
+:content-only:
+:members:
+```
+
 ## Expression evaluation
 
 The recursive-descent evaluator behind the PALS expression grammar. The C entry

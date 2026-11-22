@@ -9,7 +9,6 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
-#include <mutex>
 #include <ryml.hpp>
 #include <ryml_std.hpp>
 #include <sstream>
@@ -146,14 +145,20 @@ std::string build_parse_error(const RymlError& e, const std::string& src) {
 // default (aborting) construction could otherwise run *after* ours in an
 // unspecified static-init order and clobber it. Call it before constructing any
 // Tree, whose callbacks are copied from the global at construction.
+//
+// "Once" is a function-local static: its initialization is thread-safe and
+// needs no threading library. std::call_once needs libpthread linked into the
+// program on glibc older than 2.34, which kept it separate from libc, and
+// throws "Unknown error -1" without it.
 void ensure_throwing_callbacks() {
-    static std::once_flag once;
-    std::call_once(once, [] {
+    static const bool installed = [] {
         ryml::Callbacks cb = ryml::get_callbacks();
         cb.set_error_parse(&ryml_error_parse);
         cb.set_error_basic(&ryml_error_basic);
         ryml::set_callbacks(cb);
-    });
+        return true;
+    }();
+    (void)installed;
 }
 
 }  // namespace

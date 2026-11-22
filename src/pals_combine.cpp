@@ -3,6 +3,7 @@
 // includes spliced in and its `load`ed files merged. See pals_pipeline.h.
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <set>
 #include <string>
@@ -29,21 +30,53 @@ namespace pals {
 // folded -- so one file reaches the `original` master tree under one key
 // whatever route led to it, and a reference cycle is recognisable by that key.
 
-// Everything up to the last '/' in `p`; empty when `p` names a bare file.
-static std::string path_dir(const std::string& p) {
-    size_t slash = p.find_last_of('/');
-    return (slash == std::string::npos) ? std::string() : p.substr(0, slash);
+// Windows takes '\' and '/' alike as a separator and writes '\'. A path there
+// can also be rooted at a drive ("C:\dir") or a network share
+// ("\\server\share"), not just at a separator.
+#ifdef _WIN32
+static bool is_sep(char c) { return c == '/' || c == '\\'; }
+static constexpr char kSep = '\\';
+#else
+static bool is_sep(char c) { return c == '/'; }
+static constexpr char kSep = '/';
+#endif
+
+// The length of the root `p` starts with, which folding keeps as it is; 0 for
+// a relative path. The root is a leading separator, plus on Windows a drive
+// letter before it ("C:\"), a bare drive ("C:", the current directory of that
+// drive), or the two separators that begin a network path.
+static size_t root_length(const std::string& p) {
+#ifdef _WIN32
+    if (p.size() >= 2 && std::isalpha(static_cast<unsigned char>(p[0])) &&
+        p[1] == ':')
+        return (p.size() >= 3 && is_sep(p[2])) ? 3 : 2;
+    if (p.size() >= 2 && is_sep(p[0]) && is_sep(p[1])) return 2;
+#endif
+    return (!p.empty() && is_sep(p[0])) ? 1 : 0;
 }
 
-// Collapse "." and "x/.." segments and repeated separators. Leading ".." is
-// kept (there is no way to know what it resolves to without touching the
-// filesystem) except on an absolute path, where it cannot rise above "/".
+// Everything before the last separator in `p`, but never less than its root
+// (so a file at "/" has the directory "/"); empty when `p` names a bare file.
+static std::string path_dir(const std::string& p) {
+    size_t i = p.size();
+    while (i > 0 && !is_sep(p[i - 1])) --i;
+    if (i == 0) return std::string();
+    return p.substr(0, std::max(i - 1, root_length(p)));
+}
+
+// Collapse "." and "x/.." segments and repeated separators, writing the
+// platform's separator. Leading ".." is kept (there is no way to know what it
+// resolves to without touching the filesystem) except on an absolute path,
+// where it cannot rise above the root.
 std::string fold_path(const std::string& p) {
-    const bool absolute = !p.empty() && p[0] == '/';
+    const size_t root_len = root_length(p);
+    std::string root = p.substr(0, root_len);
+    std::replace_if(root.begin(), root.end(), is_sep, kSep);
+    const bool absolute = !root.empty() && is_sep(root.back());
     std::vector<std::string> parts;
-    for (size_t i = 0; i < p.size();) {
-        size_t j = p.find('/', i);
-        if (j == std::string::npos) j = p.size();
+    for (size_t i = root_len; i < p.size();) {
+        size_t j = i;
+        while (j < p.size() && !is_sep(p[j])) ++j;
         std::string seg = p.substr(i, j - i);
         i = j + 1;
         if (seg.empty() || seg == ".") continue;
@@ -55,9 +88,9 @@ std::string fold_path(const std::string& p) {
             parts.push_back(seg);
         }
     }
-    std::string out = absolute ? "/" : "";
+    std::string out = root;
     for (size_t k = 0; k < parts.size(); ++k) {
-        if (k) out += "/";
+        if (k) out += kSep;
         out += parts[k];
     }
     if (out.empty()) out = ".";
@@ -67,9 +100,9 @@ std::string fold_path(const std::string& p) {
 // The path of the file `ref` names, as named from inside the file at `from`.
 static std::string resolve_path(const std::string& from,
                                 const std::string& ref) {
-    if (!ref.empty() && ref[0] == '/') return fold_path(ref);
+    if (root_length(ref) > 0) return fold_path(ref);
     std::string dir = path_dir(from);
-    return fold_path(dir.empty() ? ref : dir + "/" + ref);
+    return fold_path(dir.empty() ? ref : dir + kSep + ref);
 }
 
 /**

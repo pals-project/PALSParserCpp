@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.18)
 # The version pals_parser_cpp_version() reports. A release is tagged
 # v<version> on a commit where this says <version>.
-project(PALSParserCpp VERSION 0.0.3)
+project(PALSParserCpp VERSION 0.0.4)
 
 # Default to Release when no build type is given. This is not just about
 # optimization: an empty build type leaves NDEBUG undefined, and c4core (vendored

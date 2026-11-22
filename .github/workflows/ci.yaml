@@ -38,6 +38,29 @@ jobs:
       - run: cmake --build build --config Release --parallel
       - run: ctest --test-dir build -C Release --output-on-failure --no-compress-output
 
+  oldest-gcc:
+    # The oldest GCC the README names, on glibc 2.31 (Debian 11). Before glibc
+    # 2.34, libpthread was separate from libc, and a program that doesn't link
+    # it gets no threading support from libstdc++ (std::call_once throws).
+    name: C++ GCC 9, glibc 2.31 - ${{ github.event_name }}
+    runs-on: ubuntu-latest
+    container: gcc:9
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      # The image has no CMake.
+      - name: Install CMake
+        run: |
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz | tar -xz -C /opt
+          echo /opt/cmake-3.31.6-linux-x86_64/bin >> "$GITHUB_PATH"
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure --no-compress-output
+
   system-dependencies:
     name: Installed dependencies - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

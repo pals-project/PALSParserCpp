@@ -25,6 +25,61 @@ jobs:
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure --verbose --no-compress-output
 
+  system-dependencies:
+    name: Installed dependencies - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and install dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          prefix="$RUNNER_TEMP/pals-prefix"
+          git clone --branch v0.15.0 --depth 1 --recurse-submodules https://github.com/biojppm/rapidyaml.git "$RUNNER_TEMP/ryml"
+          git clone --branch pcre2-10.44 --depth 1 https://github.com/PCRE2Project/pcre2.git "$RUNNER_TEMP/pcre2"
+          git clone --branch v0.11.1 --depth 1 https://github.com/pals-project/AtomicAndPhysicalConstantsCLib.git "$RUNNER_TEMP/apc"
+          git clone --branch v3.5.2 --depth 1 https://github.com/catchorg/Catch2.git "$RUNNER_TEMP/catch2"
+          cmake -S "$RUNNER_TEMP/ryml" -B "$RUNNER_TEMP/ryml-build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=ON
+          cmake --build "$RUNNER_TEMP/ryml-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/ryml-build"
+          cmake -S "$RUNNER_TEMP/pcre2" -B "$RUNNER_TEMP/pcre2-build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=ON -DPCRE2_BUILD_PCRE2_16=OFF -DPCRE2_BUILD_PCRE2_32=OFF -DPCRE2_BUILD_TESTS=OFF -DPCRE2_BUILD_PCRE2GREP=OFF
+          cmake --build "$RUNNER_TEMP/pcre2-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/pcre2-build"
+          cmake -S "$RUNNER_TEMP/apc" -B "$RUNNER_TEMP/apc-build" -DCMAKE_BUILD_TYPE=Release -DAPC_BUILD_TESTS=OFF
+          cmake --build "$RUNNER_TEMP/apc-build" --target apc --parallel 2
+          cmake -S "$RUNNER_TEMP/catch2" -B "$RUNNER_TEMP/catch2-build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" -DCATCH_BUILD_TESTING=OFF
+          cmake --build "$RUNNER_TEMP/catch2-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/catch2-build"
+      - name: Test system dependency build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build-system -DCMAKE_BUILD_TYPE=Release -DPALS_USE_SYSTEM_DEPS=ON -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/pals-prefix" -DPALS_APC_INCLUDE_DIR="$RUNNER_TEMP/apc/include" -DPALS_APC_LIBRARY="$RUNNER_TEMP/apc-build/libapc.a" -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/pals-prefix"
+          cmake --build build-system --parallel 2
+          ctest --test-dir build-system --output-on-failure
+      - name: Install library-only component and load without loader overrides
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build-package -DCMAKE_BUILD_TYPE=Release -DPALS_USE_SYSTEM_DEPS=ON -DBUILD_TESTING=OFF -DPALS_BUILD_EXAMPLES=OFF -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/pals-prefix" -DPALS_APC_INCLUDE_DIR="$RUNNER_TEMP/apc/include" -DPALS_APC_LIBRARY="$RUNNER_TEMP/apc-build/libapc.a" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/pals-prefix"
+          cmake --build build-package --parallel 2
+          cmake --install build-package --component PALSParserCpp --prefix "$RUNNER_TEMP/component-only"
+          test -f "$RUNNER_TEMP/component-only/include/PALSParserCpp.h"
+          test "$(find "$RUNNER_TEMP/component-only" -type f | wc -l | tr -d ' ')" = 3
+          cmake --install build-package --component PALSParserCpp
+          python3 - <<'PYCODE'
+          import ctypes, os, pathlib, sys
+          suffix = 'dylib' if sys.platform == 'darwin' else 'so'
+          lib = pathlib.Path(os.environ['RUNNER_TEMP']) / 'pals-prefix' / 'lib' / ('libPALSParserCpp.' + suffix)
+          ctypes.CDLL(str(lib))
+          PYCODE
+
   build-docs:
     name: Build Documentation
     runs-on: ubuntu-latest

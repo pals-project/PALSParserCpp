@@ -19,7 +19,7 @@ The library has a C API, so other languages can call it. See
 
 ## Building
 
-You need CMake 3.16 or later and a C++17 compiler. CMake downloads the other
+You need CMake 3.18 or later and a C++17 compiler. CMake downloads the other
 dependencies itself (rapidyaml, PCRE2, Catch2 and
 [AtomicAndPhysicalConstantsCLib](https://github.com/pals-project/AtomicAndPhysicalConstantsCLib)).
 From the repository root:
@@ -35,6 +35,11 @@ Linux) along with the tests and examples. To run the tests:
 ```console
 ctest --test-dir build --output-on-failure
 ```
+
+### Packaging and installed dependencies
+
+See [Packaging and installed dependencies](docs/src/guide/usage.md#packaging-and-installed-dependencies)
+for library-only installation, system dependency options, and runtime search paths.
 
 ## Examples
 

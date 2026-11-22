@@ -210,6 +210,10 @@ void deep_copy_recursive(ryml::Tree& dst_t, size_t dst_node,
 
 extern "C" {
 
+YAML_API const char* pals_parser_cpp_version(void) {
+    return PALS_PARSER_CPP_VERSION_STRING;
+}
+
 YAML_API YAMLTreeHandle parse_file(const char* filename) {
     ensure_throwing_callbacks();
     g_last_parse_error.clear();

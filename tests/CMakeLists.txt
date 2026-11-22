@@ -18,6 +18,7 @@ add_executable(tests
   test_floor.cpp
   test_placement.cpp
   test_evaluation_order.cpp
+  test_version.cpp
   # pals_floor.cpp carries hidden visibility in the shared library, so its
   # geometry symbols are compiled directly into the tests for test_floor.cpp.
   ../src/pals_floor.cpp
@@ -28,6 +29,11 @@ target_link_libraries(tests
   PALSParserCpp
   Catch2::Catch2WithMain
 )
+
+# What pals_parser_cpp_version() must return: the project version, set in the
+# top-level CMakeLists.txt.
+target_compile_definitions(tests PRIVATE
+  PALS_PARSER_CPP_EXPECTED_VERSION="${PALSParserCpp_VERSION}")
 
 include(Catch)
 catch_discover_tests(tests)

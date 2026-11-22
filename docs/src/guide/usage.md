@@ -50,6 +50,12 @@ and Linux, installed libraries search their own directory for dependencies
 require an appropriate runtime search path supplied by the application or
 packaging tool. On Windows, place dependency DLLs on the DLL search path.
 
+The library's version is the `VERSION` in the `project()` call at the top of
+`CMakeLists.txt`, and {cpp:func}`pals_parser_cpp_version` returns it at run
+time. A release is tagged `v<version>` on a commit where `VERSION` says
+`<version>`, so a package built from the tag reports the version it is
+named for.
+
 ## Expanding a lattice
 
 `parse_and_expand_PALS` reads a lattice file, resolves its includes and loads,

@@ -43,7 +43,7 @@ this supplies the `PCRE2_STATIC` definition required on Windows. The option
 defaults to `OFF` for shared PCRE2.
 
 The `PALSParserCpp` install component installs only the library, its public C
-header, and an upstream license file if present. It excludes dependencies,
+header, and the GPL-2.0-only license file. It excludes dependencies,
 tests and examples. Shared dependencies must be deployed separately. On macOS
 and Linux, installed libraries search their own directory for dependencies
 (`@loader_path` and `$ORIGIN`, respectively). Dependencies in other directories

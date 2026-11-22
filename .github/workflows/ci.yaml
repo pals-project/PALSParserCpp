@@ -93,6 +93,57 @@ jobs:
           ctypes.CDLL(str(lib))
           PYCODE
 
+  conda-forge-dependencies-windows:
+    # The conda-forge palsparsercpp package is built against conda-forge's own
+    # rapidyaml, PCRE2 and Catch2, which on Windows are DLLs, with a static
+    # AtomicAndPhysicalConstantsCLib linked in. This job builds the same way.
+    name: conda-forge dependencies - windows-latest
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: pals
+          condarc: |
+            channels:
+              - conda-forge
+          create-args: >-
+            librapidyaml=0.15.0
+            pcre2
+            catch2
+            python
+          init-shell: bash
+      - name: Build AtomicAndPhysicalConstantsCLib
+        run: |
+          set -euxo pipefail
+          tmp=$(cygpath -m "$RUNNER_TEMP")
+          git clone --branch v0.12.0 --depth 1 https://github.com/pals-project/AtomicAndPhysicalConstantsCLib.git "$tmp/apc"
+          cmake -S "$tmp/apc" -B "$tmp/apc-build" -DAPC_BUILD_TESTS=OFF
+          cmake --build "$tmp/apc-build" --config Release --target apc
+      - name: Build and test against conda-forge's dependencies
+        run: |
+          set -euxo pipefail
+          tmp=$(cygpath -m "$RUNNER_TEMP")
+          prefix=$(cygpath -m "$CONDA_PREFIX/Library")
+          cmake -S . -B build-conda -DPALS_USE_SYSTEM_DEPS=ON -DPALS_BUILD_EXAMPLES=OFF \
+            -DCMAKE_PREFIX_PATH="$prefix" -DCMAKE_INSTALL_PREFIX="$prefix" \
+            -DPALS_APC_INCLUDE_DIR="$tmp/apc/include" \
+            -DPALS_APC_LIBRARY="$tmp/apc-build/Release/apc.lib"
+          cmake --build build-conda --config Release --parallel
+          ctest --test-dir build-conda -C Release --output-on-failure
+      # conda puts a Windows DLL in Library\bin, beside the DLLs it depends on,
+      # which is where palsparserpy looks for it.
+      - name: Install the library and load it as palsparserpy does
+        run: |
+          set -euxo pipefail
+          cmake --install build-conda --config Release --component PALSParserCpp
+          python -c "import ctypes, os, sys; ctypes.CDLL(os.path.join(sys.prefix, 'Library', 'bin', 'PALSParserCpp.dll'))"
+
   build-docs:
     name: Build Documentation
     runs-on: ubuntu-latest

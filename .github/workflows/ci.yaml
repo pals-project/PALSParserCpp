@@ -25,6 +25,19 @@ jobs:
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure --verbose --no-compress-output
 
+  windows:
+    name: C++ Windows (MSVC) Release - ${{ github.event_name }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      # Visual Studio is a multi-configuration generator: the configuration is
+      # chosen when building and testing, not with CMAKE_BUILD_TYPE.
+      - run: cmake -S . -B build
+      - run: cmake --build build --config Release --parallel
+      - run: ctest --test-dir build -C Release --output-on-failure --no-compress-output
+
   system-dependencies:
     name: Installed dependencies - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

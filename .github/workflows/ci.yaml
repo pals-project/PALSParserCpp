@@ -43,7 +43,7 @@ jobs:
           prefix="$RUNNER_TEMP/pals-prefix"
           git clone --branch v0.15.0 --depth 1 --recurse-submodules https://github.com/biojppm/rapidyaml.git "$RUNNER_TEMP/ryml"
           git clone --branch pcre2-10.44 --depth 1 https://github.com/PCRE2Project/pcre2.git "$RUNNER_TEMP/pcre2"
-          git clone --branch v0.11.1 --depth 1 https://github.com/pals-project/AtomicAndPhysicalConstantsCLib.git "$RUNNER_TEMP/apc"
+          git clone --branch v0.12.0 --depth 1 https://github.com/pals-project/AtomicAndPhysicalConstantsCLib.git "$RUNNER_TEMP/apc"
           git clone --branch v3.5.2 --depth 1 https://github.com/catchorg/Catch2.git "$RUNNER_TEMP/catch2"
           cmake -S "$RUNNER_TEMP/ryml" -B "$RUNNER_TEMP/ryml-build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=ON
           cmake --build "$RUNNER_TEMP/ryml-build" --parallel 2

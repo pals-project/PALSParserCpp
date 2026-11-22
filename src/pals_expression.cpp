@@ -406,14 +406,9 @@ class Parser {
 bool builtin_constant(const std::string& name, double& out) {
   // Physical values come from AtomicAndPhysicalConstantsCLib (APC, CODATA
   // 2022) so PALS shares the ecosystem's numbers; pi is exact.
-  //
-  // classical_radius_factor is the one deliberate exception: apc::
-  // CLASSICAL_RADIUS_FACTOR is r_e*m_e with the mass in MeV, while APC's own
-  // M_ELECTRON is in eV, so the exported constant is 1e6 larger than the value
-  // PALS wants. Deriving it here from APC's own r_electron and M_ELECTRON keeps
-  // it in eV*m and matches Bmad's e^2/(4*pi*eps_0) = 1.44e-9 eV*m. Do not
-  // "simplify" this to apc::CLASSICAL_RADIUS_FACTOR without resolving the units
-  // question upstream first — it would silently introduce a factor of 1e6.
+  // classical_radius_factor is r_e*m_e in eV*m (Bmad's e^2/(4*pi*eps_0) =
+  // 1.44e-9 eV*m), which is what apc::CLASSICAL_RADIUS_FACTOR holds since APC
+  // v0.12.0; before that APC's value was 1e6 too small.
   if (name == "pi") { out = kPi; return true; }
   if (name == "twopi") { out = 2 * kPi; return true; }
   if (name == "c_light") { out = apc::C_LIGHT; return true; }
@@ -426,7 +421,7 @@ bool builtin_constant(const std::string& name, double& out) {
   if (name == "mu_0") { out = apc::MU_0; return true; }
   if (name == "epsilon_0") { out = apc::EPS_0; return true; }
   if (name == "classical_radius_factor") {
-    out = apc::R_ELECTRON * apc::M_ELECTRON;
+    out = apc::CLASSICAL_RADIUS_FACTOR;
     return true;
   }
   if (name == "fine_structure") { out = apc::FINE_STRUCTURE; return true; }

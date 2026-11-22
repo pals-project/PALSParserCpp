@@ -26,6 +26,15 @@ option(PALS_USE_SYSTEM_DEPS "Use installed rapidyaml, PCRE2, APC and (when testi
 
 option(PALS_PCRE2_STATIC "Installed PCRE2 library is static (system dependencies only)" OFF)
 
+# Windows finds a DLL beside the executable that loads it, or on PATH, so the
+# tests and examples must land in the same directory as PALSParserCpp.dll.
+# Multi-configuration generators (Visual Studio) add a per-configuration
+# subdirectory to it: build/Release, say. Other platforms keep the default
+# layout, where the test binary is build/tests/tests.
+if(WIN32)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
 if(PALS_USE_SYSTEM_DEPS)
   find_package(ryml CONFIG REQUIRED)
   find_path(PALS_PCRE2_INCLUDE_DIR pcre2.h REQUIRED)

@@ -31,6 +31,17 @@ struct LoadCase {
                                     root_lattice);
     }
 
+    // As parse(), but with every separator in the path the platform's own:
+    // on Windows the path has no '/' at all, only '\'.
+    void parse_native(const std::string& rel,
+                      const char* root_lattice = nullptr) {
+        const std::string path =
+            std::filesystem::path(lattice_file(dir + "/" + rel))
+                .make_preferred()
+                .string();
+        lat = parse_and_expand_PALS(path.c_str(), root_lattice);
+    }
+
     std::vector<std::string> problems() const {
         std::vector<std::string> out;
         for (size_t i = 0; i < lat.problems.count; ++i)
@@ -195,6 +206,27 @@ TEST_CASE("a load path is relative to the file naming it", "[load]") {
     REQUIRE(c.load_problems() == "");
     REQUIRE(list_of(c.lat.combined, "notes") ==
             std::vector<std::string>{"top", "inner"});
+}
+
+TEST_CASE("load and include paths resolve from a path in the platform's form",
+          "[load][include]") {
+    // parse() joins the case directory and the file with '/', which a library
+    // that split paths on '/' alone would still get right on Windows. Here the
+    // path has only '\' there, as a Windows program would usually pass it.
+    SECTION("an include in a loaded file a directory below") {
+        LoadCase c("load_include");
+        c.parse_native("joiner.pals.yaml");
+        REQUIRE(c.load_problems() == "");
+        REQUIRE(facility_names(c.lat.combined) ==
+                std::vector<std::string>{"m1", "extra_ele", "m2"});
+    }
+    SECTION("a load reaching down a directory and back up") {
+        LoadCase c("load_relative");
+        c.parse_native("joiner.pals.yaml");
+        REQUIRE(c.load_problems() == "");
+        REQUIRE(list_of(c.lat.combined, "notes") ==
+                std::vector<std::string>{"top", "inner"});
+    }
 }
 
 TEST_CASE("distinct versions collect into one comma delimited list", "[load]") {

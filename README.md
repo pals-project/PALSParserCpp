@@ -19,9 +19,9 @@ The library has a C API, so other languages can call it. See
 
 ## Building
 
-You need CMake 3.18 or later and a C++17 compiler. CMake downloads the other
-dependencies itself (rapidyaml, PCRE2, Catch2 and
-[AtomicAndPhysicalConstantsCLib](https://github.com/pals-project/AtomicAndPhysicalConstantsCLib)).
+You need CMake 3.18 or later and a C++17 compiler; with GCC, version 9 or
+later. CMake downloads the other dependencies itself (rapidyaml, PCRE2,
+Catch2 and [AtomicAndPhysicalConstantsCLib](https://github.com/pals-project/AtomicAndPhysicalConstantsCLib)).
 From the repository root:
 
 ```console

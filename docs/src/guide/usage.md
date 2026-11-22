@@ -20,8 +20,9 @@ separate, under `tests/lattices/`.
 
 ### Packaging and installed dependencies
 
-CMake 3.18 or later and a C++17 compiler are required. The defaults build tests
-and examples and fetch the dependencies. Packagers can instead use:
+CMake 3.18 or later and a C++17 compiler are required; with GCC, version 9 or
+later. The defaults build tests and examples and fetch the dependencies.
+Packagers can instead use:
 
 ```console
 cmake -S . -B build-package -DPALS_USE_SYSTEM_DEPS=ON -DBUILD_TESTING=OFF -DPALS_BUILD_EXAMPLES=OFF -DCMAKE_PREFIX_PATH=/path/to/dependencies -DCMAKE_INSTALL_PREFIX=/path/to/prefix

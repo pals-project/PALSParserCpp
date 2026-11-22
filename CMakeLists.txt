@@ -88,11 +88,11 @@ else()
   # AtomicAndPhysicalConstants.jl so the whole ecosystem shares one set of numbers.
   # Pinned to a tag, not main: the reference values in the tests are tied to a
   # specific APC release, so an upstream push must not silently change them here.
-  # apc's version tracks the APC release it mirrors (v0.11.1 = APC v0.11.1).
+  # apc's version tracks the APC release it mirrors (v0.12.0 = APC v0.12.0).
   FetchContent_Declare(
     apc
     GIT_REPOSITORY https://github.com/pals-project/AtomicAndPhysicalConstantsCLib.git
-    GIT_TAG v0.11.1
+    GIT_TAG v0.12.0
   )
   set(APC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 

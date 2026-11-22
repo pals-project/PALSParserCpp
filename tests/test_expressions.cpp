@@ -68,14 +68,17 @@ TEST_CASE("evaluate_pals_expression: functions", "[expr]") {
 TEST_CASE("evaluate_pals_expression: built-in constants", "[expr]") {
     REQUIRE(close(eval_ok("pi"), 3.14159265358979323846));
     REQUIRE(eval_ok("c_light") == 2.99792458e8);
-    // Value of apc::K_BOLTZMANN, in eV/K.
-    REQUIRE(eval_ok("k_boltzmann") == 8.617333262e-5);
+    // k_B in eV/K is exact under the 2019 SI: 1.380649e-23 J/K divided by
+    // e = 1.602176634e-19 C. This is that quotient correctly rounded, which is
+    // what APC holds (since v0.12.0, which no longer rounds to CODATA's
+    // published 8.617333262e-5). Dividing the two literals in double precision
+    // lands one ulp away, so the literal is spelled out.
+    REQUIRE(eval_ok("k_boltzmann") == 8.617333262145177e-5);
 
-    // classical_radius_factor is derived rather than taken from APC, because
-    // apc::CLASSICAL_RADIUS_FACTOR is 1e6 larger (its mass is in MeV while
-    // apc::M_ELECTRON is in eV). Pin the exponent explicitly: the relation
-    // below holds under either convention, so on its own it would not notice a
-    // switch to the APC constant silently rescaling every lattice using it.
+    // classical_radius_factor is r_e*m_e in eV*m. APC's constant had the wrong
+    // scale before v0.12.0, so pin the exponent explicitly as well as the
+    // relation: the relation alone would not notice every lattice using the
+    // constant being rescaled by a units change.
     REQUIRE(close_rel(eval_ok("classical_radius_factor"),
                       eval_ok("r_electron") *
                           eval_ok("mass_of(\"electron\")")));

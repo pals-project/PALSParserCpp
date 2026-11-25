@@ -116,8 +116,10 @@ else()
   set(PALS_DEPENDENCIES ryml pcre2-8-static apc)
 endif()
 
-file(COPY ${CMAKE_SOURCE_DIR}/lattice_files/
-     DESTINATION ${CMAKE_BINARY_DIR}/lattice_files/)
+if(BUILD_TESTING OR PALS_BUILD_EXAMPLES)
+  file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/lattice_files/"
+       DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/lattice_files/")
+endif()
 
 add_library(PALSParserCpp SHARED
   src/PALSParserCpp.cpp

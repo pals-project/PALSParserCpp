@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # The actions used by the workflows in .github/workflows. All updates come
+  # in one PR so that bumps to neighbouring lines don't conflict.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
